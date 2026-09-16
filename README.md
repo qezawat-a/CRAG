@@ -17,7 +17,7 @@ npm install
 cp .env.example .env   # XT_API_KEY / TELEGRAM_BOT_TOKEN / AI_API_KEY ro por kon
 npm start              # trader + agent + telegram + health server
 npm run agent          # TUI-e agent (agency mode)
-npm test               # 52 test (1 test-e DB-e vaghei be-soorate skip — ba TEST_DATABASE_URL ejra mishe)
+npm test               # 58 test (1 test-e DB-e vaghei be-soorate skip — ba TEST_DATABASE_URL ejra mishe)
 ```
 
 > **Amniat:** `XT_DRY_RUN=1` (default) order/TPSL/close-e VAGHEI nemifreste. Baraye trade-e vaghei `XT_DRY_RUN=0` konid.
@@ -58,7 +58,10 @@ soul/  skills/  tests/
 ## Branch-haye Telegram (merged mode)
 
 `/status /balance /signal /pnl /settings /check_ai /close` (az xt-agent) +
-`/autotrade_on /autotrade_off /open /close_all /protect /midmanage /sync /trades /diag /reset_cooldown /set` (trader).
+`/autotrade_on /autotrade_off /open /close_all /protect /midmanage /sync /trades /reset_cooldown /set /reseed` (trader)
+(diagnose-e trader ham alan tu hamun `/diag` merge shode).
+
+> **Setting haye `.env`:** store avvalavi-e - `seedDefaults` faghat ja-haye khali ro por mikone, pas `.env`-e avaz-shode khod-be-khod ejra NEMISHE (yani leverage tu `.env` ro avaz kardi vali trade ba ghadimi ejra mishod). `/settings` meghdar-e moaser + fargh-e `.env` ro neshon mide (ba neshoone `ejra NEMISHE`) va `/reseed` env ro rooye store minevise.
 Chat-e mamuli (bedun-e `/`) mire be agent.
 
 ## Settings-e mohem (settings be store/save mishan: `/set key value`)
