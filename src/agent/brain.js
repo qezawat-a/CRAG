@@ -48,6 +48,24 @@ function safeParse(str) {
   try { return JSON.parse(str); } catch { return {}; }
 }
 
+function describeProviderError(error, provider, model) {
+  const message = String(error?.message || error || 'unknown error');
+  const cause = error?.cause;
+  const causeCode = cause?.code ? ` [${cause.code}]` : '';
+  const lower = message.toLowerCase();
+  let hint = 'provider, model, base URL و API key را بررسی کن.';
+  if (lower.includes('fetch failed') || lower.includes('timeout') || lower.includes('timed out') || causeCode) {
+    hint = 'اتصال شبکه، DNS، فایروال و base URL را بررسی کن؛ این پیام به‌تنهایی ثابت نمی‌کند API key اشتباه است.';
+  } else if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('invalid api key')) {
+    hint = 'API key یا دسترسی این provider را بررسی کن.';
+  } else if (lower.includes('429') || lower.includes('rate limit')) {
+    hint = 'rate limit یا سهمیه provider پر شده است؛ کمی بعد دوباره امتحان کن.';
+  } else if (lower.includes('404') || lower.includes('model') && (lower.includes('not found') || lower.includes('invalid'))) {
+    hint = 'نام model و base URL با مستندات provider مطابقت ندارد.';
+  }
+  return `${provider}/${model}: ${message}${causeCode} — ${hint}`;
+}
+
 // ----------------------------------------------------------------
 // 1) OPENAI-COMPATIBLE (OpenAI / DeepSeek / Ollama / Groq / ...)
 // ----------------------------------------------------------------
@@ -375,7 +393,7 @@ export async function chat({ system = '', messages = [], tools = [], thinkingLev
             errors.push(`${p.name}: model '${prev}' baraye in account nist (HTTP ${res.status}) — raftam rooye '${st.chosen}'`);
             continue;
           }
-          errors.push(`${p.name}: HTTP ${res.status} — ${bodyText.slice(0, 300)}`);
+          errors.push(`${p.name}/${p.model}: HTTP ${res.status} — ${bodyText.slice(0, 300)} — provider، model، base URL و API key را بررسی کن.`);
           break;
         }
         const parsed = parseResp(p, data);
@@ -390,16 +408,16 @@ export async function chat({ system = '', messages = [], tools = [], thinkingLev
           errors.push(`${p.name}: model '${prev}' nist (${msg.slice(0, 120)}) — raftam rooye '${st.chosen}'`);
           continue;
         }
-        errors.push(`${p.name}: ${msg}`);
+        errors.push(describeProviderError(e, p.name, p.model));
         break;
       }
     }
   }
 
   throw new Error(
-    'Hameye provider-ha shekast khordand (fallback tamoom shod):\n  - ' +
+    'AI request failed after trying all configured providers/models:\n  - ' +
     errors.join('\n  - ') +
-    '\n(Hint: hich model-i ba in key kar nakard — key/baseURL ro check kon, ya AI_MODEL ro dasti bezar.)'
+    '\nNo provider was confirmed usable. The diagnostics above are the actual failures; do not assume the API key is the cause without an HTTP/auth error.'
   );
 }
 

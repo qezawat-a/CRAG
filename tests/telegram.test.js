@@ -13,6 +13,8 @@ describe('telegram', () => {
   it('TG_COMMANDS menu dare', () => {
     assert.ok(TG_COMMANDS.find((c) => c.command === 'start'));
     assert.ok(TG_COMMANDS.find((c) => c.command === 'signal'));
+    assert.ok(TG_COMMANDS.find((c) => c.command === 'test'));
+    assert.ok(TG_COMMANDS.find((c) => c.command === 'tset'));
     assert.ok(startText('J-Rock').includes('/status'));
   });
   it('resolveTelegramConfig: settings > env', () => {
@@ -34,6 +36,14 @@ describe('telegram', () => {
     // betoone be trader/agent berese — vagar-na "Unknown command" midad.
     const u = await handleTelegramCommand('/blah', {});
     assert.equal(u.handled, false);
+  });
+  it('/test and typo-friendly /tset run the AI connectivity check', async () => {
+    const say = async () => ({ reply: 'online' });
+    for (const command of ['/check_ai', '/test', '/tset']) {
+      const r = await handleTelegramCommand(command, { say, getModel: () => 'test-model' });
+      assert.equal(r.handled, true, `${command} bayad handled beshe`);
+      assert.ok(r.reply.includes('online'), `${command} bayad response-e AI ro neshun bede`);
+    }
   });
   it('command haye trader az handleTelegramCommand rad NEMISHAN (handled:false)', async () => {
     // BUG-e ghabl: hame ina 'Unknown command' migereftan chon in module

@@ -32,6 +32,8 @@ export const TG_COMMANDS = [
   { command: 'pnl', description: 'PnL-e position haye baz' },
   { command: 'settings', description: 'HAMEYE tanzimat-e trading (az store)' },
   { command: 'check_ai', description: 'Test-e AI connection' },
+  { command: 'test', description: 'Test-e AI connection (alias)' },
+  { command: 'tset', description: 'Test-e AI connection (typo-friendly alias)' },
   { command: 'close', description: 'Close position: /close SYMBOL SIDE' },
   { command: 'diag', description: 'Diagnose: key/setting ha' },
 ];
@@ -126,7 +128,7 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         lines.push('Note: trade settings FAGHAT az injan (TUI/Telegram/agent) — .env ignore mishe.');
         return { handled: true, reply: lines.join('\n') };
       }
-      case 'check_ai': {
+      case 'check_ai': case 'test': case 'tset': {
         try {
           const out = await say('Hello, respond with a brief confirmation that you are online.');
           const reply = out && out.reply !== undefined ? out.reply : String(out);
