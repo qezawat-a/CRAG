@@ -49,6 +49,10 @@ export class FileBackend {
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
     fs.renameSync(tmp, this.file); // atomic
   }
+  async info() {
+    const st = fs.statSync(this.file, { throwIfNoEntry: false });
+    return { backend: 'file', file: this.file, exists: Boolean(st), bytes: st ? st.size : 0, updatedAt: st ? new Date(st.mtimeMs).toISOString() : null };
+  }
   async close() {}
 }
 
@@ -85,6 +89,10 @@ export class PostgresBackend {
       [this.id, JSON.stringify(data)],
     );
   }
+  async info() {
+    const r = await this._pool.query(`SELECT id, updated_at, pg_column_size(data) AS bytes FROM ${TABLE} ORDER BY updated_at DESC`);
+    return { backend: 'postgres', id: this.id, rows: (r && r.rows) || [] };
+  }
   async close() { if (this._pool && typeof this._pool.end === 'function') { try { await this._pool.end(); } catch { /* hichi */ } } }
 }
 
@@ -116,6 +124,10 @@ export class MysqlBackend {
   }
   async save(data) {
     await this._pool.query(`INSERT INTO ${TABLE} (id, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)`, [this.id, JSON.stringify(data)]);
+  }
+  async info() {
+    const [rows] = await this._pool.query(`SELECT id, updated_at, LENGTH(data) AS bytes FROM ${TABLE} ORDER BY updated_at DESC`);
+    return { backend: 'mysql', id: this.id, rows: rows || [] };
   }
   async close() { if (this._pool && typeof this._pool.end === 'function') { try { await this._pool.end(); } catch { /* hichi */ } } }
 }

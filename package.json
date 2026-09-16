@@ -11,6 +11,7 @@
     "start": "node src/main.js",
     "agent": "node src/ui/tui.js",
     "harness": "node src/harness.js",
+    "db:check": "node scripts/db-check.js",
     "test": "node --test tests/"
   },
   "engines": {
