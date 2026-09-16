@@ -13,7 +13,7 @@
     "userId": ""
   },
   "mcp": {
-    "enabled": true,
+    "enabled": false,
     "servers": {
       "fs": {
         "command": "npx",
