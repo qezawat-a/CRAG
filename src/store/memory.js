@@ -215,9 +215,23 @@ export class LongTermMemory {
   }
 
   // ---------- settings ----------
+  // AGENT-ONLY: hameye trade settings FAGHAT via agent (TUI/Telegram/tools)
+  // set/get mishan. .env baraye trade tuning KHANDE NEMISHE.
   setSetting(key, value) {
-    this.data.settings[key] = String(value);
+    const normKey = Config.normalizeSettingKey ? Config.normalizeSettingKey(key) : String(key).trim().toLowerCase();
+    this.data.settings[normKey] = String(value);
     this._save();
+    return normKey;
+  }
+
+  // set ba validation (baraye /set + trader_settings_set).
+  // Return {ok, key, error} — age ok, store update shode.
+  setSettingValidated(key, value) {
+    const v = Config.validateSetting ? Config.validateSetting(key, value) : { ok: true, key: String(key).trim().toLowerCase(), normalized: String(value) };
+    if (!v.ok) return v;
+    this.data.settings[v.key] = String(v.normalized);
+    this._save();
+    return v;
   }
 
   setSettingDefault(key, value) {
@@ -227,21 +241,30 @@ export class LongTermMemory {
     return true;
   }
 
-  // fargh-e store ba env (baraye /settings) — key -> {stored, env, diff}
+  // fargh-e store ba DEFAULT (baraye /settings) — key -> {stored, default, diff}
+  // GHABL: envDiff store vs .env ro moghayese mikard (confusing "ejra NEMISHE").
+  // ALAN (agent-only): store vs static defaults — hich .env dar kar nist.
+  // Baraye backward-compat, field-e `env` ham = default negah dashte shode.
   envDiff() {
     const out = {};
     for (const [k, v] of Object.entries(Config.defaultSettings())) {
       const cur = this.data.settings[k];
-      out[k] = { stored: cur === undefined ? null : String(cur), env: String(v), diff: cur === undefined || String(cur) !== String(v) };
+      const stored = cur === undefined ? null : String(cur);
+      const defStr = String(v);
+      out[k] = { stored, env: defStr, default: defStr, diff: stored !== null && stored !== defStr };
     }
     return out;
   }
 
-  // env (Config) ro ROOYE store benevis — /reseed
-  // seedDefaults faghat ja-haye KHALI ro por mikone, pas vaghti .env ro avaz
-  // mikoni store-e ghadimi avvalavi mimune va .env ejra NEMISHE; in tabe un
-  // fargho ejra mikone va list-e key-haye avaz-shode ro bar migardone.
-  applyEnvDefaults() {
+  // Alias-e jadid: diff vs defaults (esme roshan-tar).
+  settingsDiff() { return this.envDiff(); }
+
+  // Reset store be static defaults (agent-only).
+  // GHABL: applyEnvDefaults .env ro rooye store minevesht (/reseed).
+  // ALAN: .env baraye trade IGNORE mishe — pas in tabe store ro be
+  // DEFAULT haye static reset mikone. Baraye backward-compat, applyEnvDefaults
+  // hanuz hast va hamin kar ro mikone (deprecated).
+  resetToDefaults() {
     const changed = [];
     for (const [k, v] of Object.entries(Config.defaultSettings())) {
       const cur = this.data.settings[k];
@@ -250,8 +273,24 @@ export class LongTermMemory {
       }
       this.data.settings[k] = String(v);
     }
+    // legacy cleanup
+    for (const legacy of Config.LEGACY_SETTINGS) {
+      if (this.data.settings[legacy] !== undefined) {
+        changed.push({ key: legacy, from: String(this.data.settings[legacy]), to: '(hazf shod — legacy)' });
+        delete this.data.settings[legacy];
+      }
+    }
+    // alias cleanup: margin_mode -> position_type (sync)
+    if (this.data.settings.margin_mode !== undefined && this.data.settings.position_type === undefined) {
+      this.data.settings.position_type = String(this.data.settings.margin_mode);
+    }
     this._save();
     return changed;
+  }
+
+  // env (Config) ro ROOYE store benevis — /reseed (DEPRECATED, alan = resetToDefaults)
+  applyEnvDefaults() {
+    return this.resetToDefaults();
   }
 
   getSetting(key, defaultValue = null) {

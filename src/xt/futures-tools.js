@@ -19,8 +19,22 @@ const STR = (d) => ({ type: 'string', description: d });
 const NUM = (d) => ({ type: 'number', description: d });
 const INT = (d) => ({ type: 'integer', description: d });
 // default symbol az env
-const DEF = () => process.env.XT_DEFAULT_SYMBOL || 'btc_usdt';
+// default symbol az store (agent-only), na .env
 export function xtFuturesTools({ getSetting } = {}) {
+  const DEF = () => {
+    try {
+      const s = getSetting ? getSetting('symbol', null) : null;
+      if (s) return String(s).toLowerCase();
+    } catch {}
+    return 'btc_usdt';
+  };
+  const TFS = () => {
+    try {
+      const t = getSetting ? getSetting('timeframes', null) : null;
+      if (t) return String(t).split(',').map((x) => x.trim()).filter(Boolean);
+    } catch {}
+    return ['1m', '3m', '5m', '15m'];
+  };
   const R = (xt) => risk(xt, getSetting);
   return [
     { name: 'xt_symbol_detail', description: 'Jozziat-e symbol-e futures (contractSize, minQty, precision...).', parameters: S('symbol', { symbol: STR('mesal btc_usdt (default az env)') }), async run(a) { const xt = client(); return JSON.stringify(await xt.getSymbolDetail(a.symbol || DEF())); } },
@@ -32,7 +46,7 @@ export function xtFuturesTools({ getSetting } = {}) {
     { name: 'xt_account_info', description: 'Account info (accountId, allowTrade...).', parameters: S('a', {}), async run(a) { const xt = client(); return JSON.stringify(await xt.getAccountInfo()); } },
     { name: 'xt_positions', description: 'Position haye baz (floatingPL, profitId...). symbol option.', parameters: S('p', { symbol: STR('symbol (khali = hame)') }), async run(a) { const xt = client(); const pm = new PositionManager(xt, R(xt)); const s = a.symbol || undefined; const list = await pm.getPositions(s || null); return JSON.stringify(list); } },
     { name: 'xt_position_pnl', description: 'PnL-e ye position (unrealized, mark, hasStop).', parameters: S('p', { symbol: STR('symbol'), positionSide: STR('LONG/SHORT') }, ['symbol', 'positionSide']), async run(a) { const xt = client(); const pm = new PositionManager(xt, R(xt)); return JSON.stringify(await pm.getPositionPnl(a.symbol, String(a.positionSide).toUpperCase())); } },
-    { name: 'xt_scan', description: 'Signal scan multi-timeframe (EMA/MACD/RSI/BB/MOM + weight vote).', parameters: S('s', { symbol: STR('symbol'), intervals: STR('comma list, default 1m,3m,5m,15m') }), async run(a) { const xt = client(); const ivs = String(a.intervals || process.env.XT_TIMEFRAMES || '1m,3m,5m,15m').split(',').map((x) => x.trim()).filter(Boolean); const r = await scanMultiTimeframe(xt, a.symbol || DEF(), ivs, { minConfidence: 70, tfMinConfidence: 60, minAgree: 1 }); r.price = await getCurrentPrice(xt, a.symbol || DEF()); return JSON.stringify(r); } },
+    { name: 'xt_scan', description: 'Signal scan multi-timeframe (EMA/MACD/RSI/BB/MOM + weight vote).', parameters: S('s', { symbol: STR('symbol'), intervals: STR('comma list, default az settings') }), async run(a) { const xt = client(); const ivs = String(a.intervals || TFS().join(',')).split(',').map((x) => x.trim()).filter(Boolean); const r = await scanMultiTimeframe(xt, a.symbol || DEF(), ivs, { minConfidence: 70, tfMinConfidence: 60, minAgree: 1 }); r.price = await getCurrentPrice(xt, a.symbol || DEF()); return JSON.stringify(r); } },
     { name: 'xt_size', description: 'Mohasebe-e size (contracts) ba margin% ya risk%. Khuruji: qty/mode/reason.', parameters: S('s', { symbol: STR('symbol'), price: NUM('entry price'), leverage: INT('leverage'), stopLossPrice: NUM('(optional) baraye risk mode') }, ['price', 'leverage']), async run(a) { const xt = client(); const r = R(xt); const s = a.symbol || DEF(); const out = await r.calculatePositionSize(s, Number(a.price), parseInt(a.leverage, 10), { stopLossPrice: a.stopLossPrice != null ? Number(a.stopLossPrice) : null }); return JSON.stringify(out); } },
     { name: 'xt_open', description: 'OPEN futures order (MARKET/LIMIT). DRY_RUN=1 bashad ejra NEMISHE (preview).', parameters: S('o', { symbol: STR('symbol'), positionSide: STR('LONG/SHORT'), orderSide: STR('BUY/SELL'), orderType: STR('MARKET/LIMIT'), origQty: INT('tedad contracts'), price: STR('(LIMIT) gheymat'), leverage: INT('(optional) set leverage ghabl az order') }, ['symbol', 'positionSide', 'orderSide', 'orderType', 'origQty']), async run(a) { if (String(process.env.XT_DRY_RUN || '').toLowerCase() === '1' || String(process.env.XT_DRY_RUN || '').toLowerCase() === 'true') return JSON.stringify({ dryRun: true, preview: a }); const xt = client(); if (a.leverage) { try { await xt.setLeverage(a.symbol, String(a.positionSide).toUpperCase(), parseInt(a.leverage, 10)); } catch (e) { return `setLeverage failed: ${e.message}`; } } return JSON.stringify(await xt.createOrder({ symbol: a.symbol, positionSide: String(a.positionSide).toUpperCase(), orderSide: String(a.orderSide).toUpperCase(), orderType: String(a.orderType).toUpperCase(), origQty: parseInt(a.origQty, 10), price: a.price ?? null })); } },
     { name: 'xt_close', description: 'CLOSE position ba MARKET IOC reduce-only (+ cancel TPSL-e hamoon side).', parameters: S('c', { symbol: STR('symbol'), positionSide: STR('LONG/SHORT'), contracts: INT('(optional) default hame') }, ['symbol', 'positionSide']), async run(a) { if (String(process.env.XT_DRY_RUN || '').toLowerCase() === '1' || String(process.env.XT_DRY_RUN || '').toLowerCase() === 'true') return JSON.stringify({ dryRun: true, preview: a }); const xt = client(); const pm = new PositionManager(xt, R(xt)); return JSON.stringify(await pm.closePosition(a.symbol, String(a.positionSide).toUpperCase(), { contracts: a.contracts ?? null })); } },

@@ -90,10 +90,20 @@ const setEnv = (kv) => {
 
 describe('/status error reporting', () => {
   it('network down -> "Price: error (...)" na "Price: 0"', async () => {
-    const restore = setEnv({ XT_API_KEY: 'AK', XT_API_SECRET: 'SK', XT_DEFAULT_SYMBOL: 'syn_usdt', XT_RETRY_BASE_MS: '0', XT_MIN_REQUEST_MS: '0' });
+    const restore = setEnv({ XT_API_KEY: 'AK', XT_API_SECRET: 'SK', XT_RETRY_BASE_MS: '0', XT_MIN_REQUEST_MS: '0' });
     try {
       await withFetch(async () => { netFail('EAI_AGAIN'); }, async () => {
-        const r = await handleTelegramCommand('/status', {});
+        // AGENT-ONLY: symbol az store (na .env XT_DEFAULT_SYMBOL)
+        const { LongTermMemory } = await import('../src/store/memory.js');
+        const fs = await import('node:fs');
+        const os = await import('node:os');
+        const path = await import('node:path');
+        const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'status-test-')), 'store.json');
+        const mem = new LongTermMemory(file, { databaseUrl: null });
+        await mem.init();
+        mem.seedDefaults();
+        mem.setSetting('symbol', 'syn_usdt');
+        const r = await handleTelegramCommand('/status', { memory: mem });
         assert.equal(r.handled, true);
         assert.ok(r.reply.includes('=== STATUS [syn_usdt] ==='), r.reply);
         assert.ok(r.reply.includes('Price: error ('), r.reply);
@@ -101,6 +111,7 @@ describe('/status error reporting', () => {
         assert.ok(r.reply.includes('fetch failed (EAI_AGAIN)'), r.reply);
         assert.ok(r.reply.includes('Balance: error ('), r.reply);
         assert.ok(r.reply.includes('Positions: error ('), r.reply);
+        await mem.close();
       });
     } finally { restore(); }
   });

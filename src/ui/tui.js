@@ -29,6 +29,10 @@ import { createAgent } from '../agent/loop.js';
 import { buildTools } from '../agent/tools.js';
 import { loadMcpTools, shutdownMcp } from '../agent/mcp.js';
 import { xtFuturesTools } from '../xt/futures-tools.js';
+import { traderTools } from '../trader/agent-tools.js';
+import { LongTermMemory } from '../store/memory.js';
+import { XTTrader } from '../trader/trader.js';
+import { Config } from '../config.js';
 import { Services } from '../services.js';
 import { Memory } from '../agent/memory.js';
 import { SessionStore } from '../session-store.js';
@@ -43,6 +47,15 @@ let AGENT_NAME = s.identity.agentName;
 const memory = await new Memory().load();
 const store = new SessionStore();
 await store.load();
+
+// --- Trader store (agent-only settings) ---
+// TUI ham mesl-e main.js be hamun store vasl-e (file ya DATABASE_URL),
+// ta /tsettings + agent chat ("setting o neshun bede") HAME ro neshun bedan.
+const traderMemory = new LongTermMemory();
+try { await traderMemory.init(); } catch (e) { console.log(`[tui] store init failed: ${e.message}`); }
+traderMemory.seedDefaults();
+Config.warnIfLegacyTradeEnv(console.log);
+const trader = new XTTrader(traderMemory);
 
 let skillsCache = listSkills(s.skills.dir, { exclude: s.skills.exclude || [] });
 
@@ -62,11 +75,16 @@ function queuedSay(text, meta) {
   return run;
 }
 
-// tool-haye kamel-e agent: registry-e markazi (basic + memory + XT futures + MCP) ba timeout (item 14)
+// tool-haye kamel-e agent: registry-e markazi (basic + memory + XT futures + trader + MCP) ba timeout (item 14)
 function xtTools() {
   if (s.xt && s.xt.enabled === false) return []; // user dar settings.json xt.enabled=false gozashte
   try {
-    return xtFuturesTools({ getSetting: (k, d) => (memory && memory.get ? null : null) ?? d });
+    const all = [];
+    all.push(...xtFuturesTools({ getSetting: (k, d) => traderMemory.getSetting(k, d) }));
+    // trader_* tools: agent betune settings ro بخونه/عوض کنه (agent-only).
+    // HAMEYE settings via trader_settings_get (na faghat 4 key + base url).
+    try { all.push(...traderTools(trader, { agentName: AGENT_NAME })); } catch {}
+    return all;
   } catch {
     return [];
   }
@@ -97,6 +115,7 @@ function makeSystem() {
     skills: skillsCache,
     tools: activeTools(),
     thinkingLevel: s.thinking.level,
+    extra: `TRADER SETTINGS (agent-only): trade settings FAGHAT via trader_settings_get/trader_settings_set (store), .env ignore mishe. Vaghti user mige "/settings" ya "setting o neshun bede" (hatta Farsi), HATMAN trader_settings_get ro seda bezan va HAMEYE 26 key ro neshun bede — hich key ro hazf/kholase NAKON.`,
   });
 }
 
@@ -135,6 +154,7 @@ async function flush() {
   await store.save();
   await store.prune(s.session.maxSessions);
   try { await memory.save(); } catch { /* memory nist — moshkeli nist */ }
+  try { await traderMemory.flush(); } catch { /* store-e trader */ }
 }
 
 function startNew(title = '') {
@@ -265,29 +285,31 @@ const FLAG_CMDS = {
   agents:   { path: 'agents.enabled',   label: 'Agents plan/build (item 18)' },
 };
 
-const MENU = `== Menu-e 18 option ==
+const MENU = `== Menu-e 18 option + Trader ==
   1. Sessions (resume/switch)  -> /sessions /resume /new        [OK]
   2. Skills                    -> /skills                       [OK]
   3. Soul (persona prompt)     -> /soul                         [OK]
   4. MCP servers               -> /mcp on|off                   [OK]
   5. Model                     -> /model [name|auto|refresh]    [OK]
   6. Providers                 -> /providers                    [OK]
-  7. Settings                  -> /settings [key val]           [OK]
+  7. Settings (agent)          -> /settings [key val]           [OK]
+  7b. Trader settings (agent-only, HAME) -> /tsettings | /tset key val | /tget key [OK]
   8. Harness                   -> npm run harness (mostaqel)    [OK]
   9. Dream (deep research)     -> /dream on|off                 [flag]
- 10. Thinking level            -> /thinking <low..max>          [OK]
- 11. Harness (= 8)             -> npm run harness               [OK]
- 12. Messenger gateway         -> /gateway on|off               [OK]
- 13. Serve localhost           -> /serve on|off                 [OK]
- 14. Tools                     -> /tools                        [OK]
- 15. Auto-refresh models/token -> /model refresh | /settings model.autoRefreshModels true [OK]
- 16. Auto-compact session      -> /compact | /settings session.autoCompact true [OK]
- 17. New session               -> /new                          [OK]
- 18. Agents plan/build         -> /agents on|off                [flag]
+  10. Thinking level            -> /thinking <low..max>          [OK]
+  11. Harness (= 8)             -> npm run harness               [OK]
+  12. Messenger gateway         -> /gateway on|off | /tg ...     [OK]
+  13. Serve localhost           -> /serve on|off                 [OK]
+  14. Tools                     -> /tools                        [OK]
+  15. Auto-refresh models/token -> /model refresh | /settings model.autoRefreshModels true [OK]
+  16. Auto-compact session      -> /compact | /settings session.autoCompact true [OK]
+  17. New session               -> /new                          [OK]
+  18. Agents plan/build         -> /agents on|off                [flag]
+  Trader: /tstatus /tsignal /ttrades /tsync /tset /tget /treset /tauto_on /tauto_off
 [OK] = code kare mikone | [flag] = hanooz code nist (item 9 Dream, 18 Agents)`;
 
 const HELP = `Dastur-ha:
-  /menu                        -> list-e 18 option
+  /menu                        -> list-e 18 option + trader
   /new [title] | /sessions | /resume [#n|id] | /delete [#n|id]
   /compact [n]                 -> compact-e dasti (item 16)
   /model [name|auto|refresh]   -> model-e .env (item 5) — bad az restart effect dare
@@ -297,10 +319,16 @@ const HELP = `Dastur-ha:
   /skills [read <id>|on <id>|off <id>|reload]  (item 2)
   /prompt                      -> system prompt-e assemble shode
   /thinking <low|mid|high|xhigh|max>           (item 10)
-  /settings [a.b.c value]      -> didan/avaz-e tanzimat (item 7)
-  /tools                       -> list-e tool-ha (item 14)
+  /settings [a.b.c value]      -> tanzimat-e AGENT (settings.json, item 7)
+  /tsettings                   -> HAMEYE tanzimat-e TRADER (az store, agent-only)
+  /tset key value              -> avaz-e setting-e trader (mesal /tset leverage 10)
+  /tget key                    -> yek setting-e trader (mesal /tget leverage)
+  /treset                      -> reset HAMEYE trader settings be defaults
+  /tstatus | /tsignal [sym] | /ttrades | /tsync | /tauto_on | /tauto_off
+  /tools                       -> list-e tool-ha (item 14, shamel trader_* + xt_*)
   /mcp|/gateway|/serve|/harness|/dream|/agents [on|off]
-  exit / quit                  -> save va khoruj`;
+  exit / quit                  -> save va khoruj
+Note: trade settings FAGHAT az /tsettings+/tset (ya Telegram /settings+/set, ya agent chat) — .env ignore mishe.`;
 
 // ==================== Suggestion-e "/" ====================
 // Vakhti "/" mizani (va Enter), list-e dastur-ha-ye mojood ro
@@ -308,7 +336,7 @@ const HELP = `Dastur-ha:
 // "/1".."/18" ham shortcut-e shomare-i-ye menu-e 18 item-e.
 const CMD_TIPS = {
   help:      '/help — rahnamayi',
-  menu:      '/menu — list-e 18 option',
+  menu:      '/menu — list-e 18 option + trader',
   new:       '/new [title] — session-e jadid (17)',
   sessions:  '/sessions — list-e session-ha (1)',
   resume:    '/resume [#n|id] — edame-ye session-e ghabli (1)',
@@ -321,8 +349,16 @@ const CMD_TIPS = {
   skills:    '/skills [read|on|off|reload] — skill-ha (2)',
   prompt:    '/prompt — system prompt-e assemble shode',
   thinking:  '/thinking <low|mid|high|xhigh|max> (10)',
-  settings:  '/settings [a.b.c val] — tanzimat (7)',
-  tools:     '/tools — list-e tool-ha (14)',
+  settings:  '/settings [a.b.c val] — tanzimat-e AGENT (7)',
+  tsettings: '/tsettings — HAMEYE tanzimat-e TRADER (agent-only)',
+  tset:      '/tset key value — avaz-e setting-e trader (mesal /tset leverage 10)',
+  tget:      '/tget key — yek setting-e trader',
+  treset:    '/treset — reset trader settings be defaults',
+  tstatus:   '/tstatus — status-e trader',
+  tsignal:   '/tsignal [symbol] — scan-e signal',
+  ttrades:   '/ttrades — trade summary',
+  tsync:     '/tsync — sync positions',
+  tools:     '/tools — list-e tool-ha (14, shamel trader_*)',
   mcp:       '/mcp [on|off] — support-e MCP (4)',
   gateway:   '/gateway [on|off] — messenger gateway (12)',
   tg:        '/tg [status|on|off|token <t>|user <id>] — Telegram mostaghim (12)',
@@ -503,7 +539,7 @@ async function handleCmd(rawInput) {
       break;
     }
 
-    // ---- item 7: Settings ----
+    // ---- item 7: Settings (AGENT) ----
     case 'settings': {
       if (!arg) {
         console.log(JSON.stringify(s, null, 2));
@@ -519,7 +555,87 @@ async function handleCmd(rawInput) {
           console.log(`'${key}' -> ${JSON.stringify(parseValue(val))}`);
         }
       }
-      console.log('mesal: /settings session.autoCompact true | /settings serve.port 9999 | /settings mcp.enabled true');
+      console.log('mesal: /settings session.autoCompact true | /settings serve.port 9999');
+      console.log('Note: in tanzimat-e AGENT-e (settings.json). Baraye TRADER: /tsettings | /tset key value');
+      break;
+    }
+
+    // ---- Trader settings (AGENT-ONLY, az store) ----
+    case 'tsettings': {
+      const defs = Config.defaultSettings();
+      const stored = traderMemory.getAllSettings();
+      console.log('=== TRADER SETTINGS (az store — agent-only, HAME) ===');
+      for (const [k, defVal] of Object.entries(defs)) {
+        const cur = stored[k] !== undefined ? String(stored[k]) : String(defVal);
+        const meta = Config.TRADER_SETTING_DEFS?.[k];
+        const label = meta?.label ? ` — ${meta.label}` : '';
+        console.log(`${k}=${cur}${String(cur) === String(defVal) ? '' : ` (default: ${defVal})`}${label}`);
+      }
+      console.log(`store=${traderMemory.persistence}`);
+      console.log('Tanzim: /tset key value (mesal /tset leverage 10) | /tget key | /treset');
+      break;
+    }
+    case 'tset': {
+      const sp = arg.indexOf(' ');
+      const key = sp > 0 ? arg.slice(0, sp).trim() : arg.trim();
+      const val = sp > 0 ? arg.slice(sp + 1).trim() : '';
+      if (!key || !val) { console.log('Estefade: /tset key value (mesal /tset leverage 10). /tsettings baraye HAME.'); break; }
+      const v = Config.validateSetting(key, val);
+      if (!v.ok) { console.log(`set failed: ${v.error}`); break; }
+      traderMemory.setSetting(v.key, v.normalized);
+      await flush();
+      console.log(`set ${v.key} = ${v.normalized} (OK, zakhire shod — ba restart NEMIPARE)`);
+      break;
+    }
+    case 'tget': {
+      const keyRaw = arg.trim();
+      if (!keyRaw) { console.log('Estefade: /tget key (mesal /tget leverage). /tsettings baraye HAME.'); break; }
+      const key = Config.normalizeSettingKey(keyRaw);
+      const defs = Config.defaultSettings();
+      if (!(key in defs)) { console.log(`unknown setting '${keyRaw}'. Valid: ${Object.keys(defs).join(', ')}`); break; }
+      console.log(`${key}=${traderMemory.getSetting(key, defs[key])} (default: ${defs[key]})`);
+      break;
+    }
+    case 'treset': {
+      const changed = traderMemory.resetToDefaults();
+      await flush();
+      if (!changed.length) console.log('hich farghi nabud — store hamun defaults-e.');
+      else {
+        console.log(`Reset be defaults (${changed.length} key):`);
+        changed.slice(0, 20).forEach((c) => console.log(`  ${c.key}: ${c.from} -> ${c.to}`));
+      }
+      break;
+    }
+    case 'tstatus': {
+      try { console.log(await trader.getStatusReport()); }
+      catch (e) { console.log(`tstatus failed: ${e.message}`); }
+      break;
+    }
+    case 'tsignal': {
+      try {
+        const r = await trader.scanAndReport(arg.trim() || null);
+        console.log(trader.formatSignalReport(r));
+      } catch (e) { console.log(`tsignal failed: ${e.message}`); }
+      break;
+    }
+    case 'ttrades': {
+      console.log(traderMemory.getTradeSummaryForAi());
+      break;
+    }
+    case 'tsync': {
+      try { console.log(await trader.syncPositions()); }
+      catch (e) { console.log(`tsync failed: ${e.message}`); }
+      break;
+    }
+    case 'tauto_on': { console.log(trader.startAutoTrade()); break; }
+    case 'tauto_off': { console.log(trader.stopAutoTrade()); break; }
+    case 'tdryrun': {
+      const v = arg.trim().toLowerCase();
+      if (!v) console.log(`XT_DRY_RUN=${process.env.XT_DRY_RUN || '0'}\nEstefade: /tdryrun 1|0`);
+      else if (['0', '1', 'true', 'false', 'on', 'off'].includes(v)) {
+        process.env.XT_DRY_RUN = ['1', 'true', 'on'].includes(v) ? '1' : '0';
+        console.log(`XT_DRY_RUN=${process.env.XT_DRY_RUN}`);
+      } else console.log('Estefade: /tdryrun 1|0');
       break;
     }
 
@@ -620,6 +736,7 @@ services = new Services({
   agentName: AGENT_NAME,
   getModel: () => envGet('AI_MODEL') || '(auto)',
   log: console.log,
+  trader,
 });
 services.syncFromSettings();
 
@@ -632,7 +749,8 @@ if (s.session.resumeLast && store.last()) {
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout, completer: cmpl });
 console.log('==============================================');
 console.log(`  ${AGENT_NAME} zende-e! (prompt-e SOUL+Style+Skills+Thinking)`);
-console.log('  /help | /menu | /new | /sessions | /prompt | /model | exit');
+console.log(`  Trader store: ${traderMemory.persistence} (settings: ${Object.keys(traderMemory.getAllSettings()).length}) — agent-only`);
+console.log('  /help | /menu | /tsettings | /tset | /new | /sessions | /prompt | /model | exit');
 console.log('==============================================');
 
 // agar process har joor crash kard ham: service-ha + MCP pak shan
@@ -647,7 +765,7 @@ while (true) {
   const input = mapNumAlias(raw); // "/5" -> "/model"
 
   const lower = input.toLowerCase();
-  if (lower === 'exit' || lower === 'quit') { await flush(); if (services) services.stopAll(); shutdownMcp(); break; }
+  if (lower === 'exit' || lower === 'quit') { await flush(); try { await traderMemory.close(); } catch {} if (services) services.stopAll(); shutdownMcp(); break; }
 
   if (input.startsWith('/')) {
     try { await handleCmd(input); } catch (e) { console.error(`\n[Error] ${e.message}`); }

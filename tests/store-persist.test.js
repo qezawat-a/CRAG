@@ -167,31 +167,39 @@ describe('LongTermMemory zakhire', () => {
   });
 });
 
-describe('/settings + env (.env chera ejra nemishod)', () => {
-  it('applyEnvDefaults: env ro rooye store minevise va fargh ha ro migoo', async () => {
+describe('/settings agent-only (store, na .env)', () => {
+  it('resetToDefaults: store ro be defaults reset mikone va fargh ha ro migoo', async () => {
     const file = tmpFile();
     const m = new LongTermMemory(file, { databaseUrl: null });
     await m.init();
     m.seedDefaults();
-    m.setSetting('leverage', '999'); // store fargh-e .env dare
-    const changed = m.applyEnvDefaults();
+    m.setSetting('leverage', '999'); // store fargh-e default dare
+    const changed = m.resetToDefaults();
     assert.ok(changed.find((c) => c.key === 'leverage' && c.from === '999'), JSON.stringify(changed));
-    assert.notEqual(m.getSetting('leverage'), '999'); // alan = meghdar-e env
+    assert.notEqual(m.getSetting('leverage'), '999'); // alan = meghdar-e default
+    // backward-compat: applyEnvDefaults hanuz hast (= resetToDefaults)
+    m.setSetting('leverage', '999');
+    const changed2 = m.applyEnvDefaults();
+    assert.ok(changed2.find((c) => c.key === 'leverage'), JSON.stringify(changed2));
     await m.close();
   });
 
-  it('/settings: meghdar-e MOASER + "ejra NEMISHE" baraye fargh-e .env', async () => {
+  it('/settings: HAMEYE settings az store (na 4 key, na "ejra NEMISHE")', async () => {
     const file = tmpFile();
     const m = new LongTermMemory(file, { databaseUrl: null });
     await m.init();
     m.seedDefaults();
-    m.setSetting('leverage', '999');
+    m.setSetting('leverage', '10');
     const r = await handleTelegramCommand('/settings', { memory: m });
     assert.equal(r.handled, true);
-    assert.ok(r.reply.includes('leverage=999 [store]'), r.reply);
-    assert.ok(r.reply.includes('ejra NEMISHE'), r.reply);
-    assert.ok(r.reply.includes('/reseed'), r.reply);
+    assert.ok(r.reply.includes('leverage=10'), r.reply);
+    assert.ok(!r.reply.includes('ejra NEMISHE'), r.reply);
+    assert.ok(r.reply.includes('/set key value'), r.reply);
     assert.ok(r.reply.includes(`store=file:${file}`), r.reply);
+    // HAMEYE keys (fix-e 4 key + base url)
+    for (const k of ['symbol=', 'timeframes=', 'min_confidence=', 'max_positions=']) {
+      assert.ok(r.reply.includes(k), r.reply);
+    }
     await m.close();
   });
 

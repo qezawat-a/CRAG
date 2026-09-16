@@ -3,8 +3,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { splitMessage, createTelegramApi } from '../src/telegram.js';
 import { handleTelegramCommand, startText, TG_COMMANDS } from '../src/telegram-commands.js';
+import { TRADER_COMMANDS, handleTraderCommand } from '../src/telegram-trader.js';
 import { resolveTelegramConfig } from '../src/gateway.js';
-import fs from 'node:fs';
 describe('telegram', () => {
   it('splitMessage: 4096 chunk', () => {
     assert.deepEqual(splitMessage('hi'), ['hi']);
@@ -38,30 +38,54 @@ describe('telegram', () => {
   it('command haye trader az handleTelegramCommand rad NEMISHAN (handled:false)', async () => {
     // BUG-e ghabl: hame ina 'Unknown command' migereftan chon in module
     // handled:true bargasht mikard va handleTraderCommand hich vaght seda nashode.
-    for (const c of ['/autotrade_on', '/autotrade_off', '/open LONG', '/close_all', '/protect', '/midmanage', '/sync', '/trades', '/reset_cooldown', '/set min_confidence 75', '/reseed']) {
+    for (const c of ['/autotrade_on', '/autotrade_off', '/open LONG', '/close_all', '/protect', '/midmanage', '/sync', '/trades', '/reset_cooldown', '/set min_confidence 75', '/get leverage', '/reset_settings', '/reseed', '/dryrun 1']) {
       const r = await handleTelegramCommand(c, {});
       assert.equal(r.handled, false, `${c} bayad handled:false bashe (vagar-na trader ejra nemishe)`);
     }
   });
   it('/start list-e trader commands ro ham neshon mide (ba ctx.traderCommands)', async () => {
-    const r = await handleTelegramCommand('/start', { agentName: 'J-Rock', traderCommands: [{ command: 'reseed', description: 'x' }, { command: 'autotrade_on', description: 'y' }] });
-    assert.ok(r.reply.includes('/reseed'));
+    const r = await handleTelegramCommand('/start', { agentName: 'J-Rock', traderCommands: [{ command: 'reset_settings', description: 'x' }, { command: 'autotrade_on', description: 'y' }] });
+    assert.ok(r.reply.includes('/reset_settings'));
     assert.ok(r.reply.includes('/autotrade_on'));
   });
-  it('har command-e TRADER_COMMANDS (a) tu switch case dare va (b) az handleTelegramCommand rad mishe', async () => {
+  it('har command-e TRADER_COMMANDS (a) handleTraderCommand handle mikone va (b) az handleTelegramCommand rad mishe', async () => {
     // Regression-e "nesfe command ha mige Unknown": handleTelegramCommand nabaad
     // command-haye trader ro (handled:true) ghabul kone, vagar-na telegram-bot.js
     // ghabl az handleTraderCommand return mishe va command hich vaght ejra nemishe.
-    const src = fs.readFileSync(new URL('../src/telegram-bot.js', import.meta.url), 'utf8');
-    const start = src.indexOf('const TRADER_COMMANDS');
-    const list = src.slice(start, src.indexOf('];', start));
-    const cmds = [...list.matchAll(/command: '([a-z_]+)'/g)].map((m) => m[1]);
-    assert.ok(cmds.length >= 11, `TRADER_COMMANDS parse nashod (${cmds.length})`);
+    // TRADER_COMMANDS alan dar src/telegram-trader.js-e (shared bot + gateway).
+    assert.ok(TRADER_COMMANDS.length >= 11, `TRADER_COMMANDS kam-e (${TRADER_COMMANDS.length})`);
+    const cmds = TRADER_COMMANDS.map((c) => c.command);
+    // start/help dar base handle mishan, baghie dar sharedTraderCommand
     for (const c of cmds) {
-      assert.ok(new RegExp(`case '${c}':`).test(src), `${c} tu TRADER_COMMANDS-e vali case nadarad`);
       const r = await handleTelegramCommand(`/${c}`, {});
       assert.equal(r.handled, false, `/${c} nabaad tu handleTelegramCommand handle beshe`);
     }
+    // shared handler: bedune trader -> handled:true ba payam-e "trader nist" (na Unknown)
+    // ba trader mock -> ham handled:true (ejra mishe, Unknown NADIM)
+    const { LongTermMemory } = await import('../src/store/memory.js');
+    const { XTTrader } = await import('../src/trader/trader.js');
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tg-test-')), 'store.json');
+    const mem = new LongTermMemory(file, { databaseUrl: null });
+    await mem.init();
+    mem.seedDefaults();
+    const trader = new XTTrader(mem);
+    for (const c of cmds) {
+      let args = [];
+      if (c === 'set') args = ['leverage', '10'];
+      if (c === 'get') args = ['leverage'];
+      if (c === 'open') args = ['LONG'];
+      if (c === 'dryrun') args = [];
+      const r = await handleTraderCommand(c, args, { trader });
+      assert.equal(r.handled, true, `/${c} bayad dar handleTraderCommand handle beshe (Unknown NADIM)`);
+      assert.ok(typeof r.reply === 'string' && r.reply.length > 0, `/${c} reply khali-e`);
+    }
+    // unknown command -> handled:false (ta caller be agent forward kone, na "Unknown command")
+    const u = await handleTraderCommand('blah_unknown_xyz', [], { trader });
+    assert.equal(u.handled, false);
+    await mem.close();
     // command-haye TG_COMMANDS ham bayad handle beshan (na handled:false).
     // fetch ra mock mikonim ta test be network (fapi.xt.com) niyaz nadashte bashe.
     const origFetch = globalThis.fetch;
@@ -79,11 +103,15 @@ describe('telegram', () => {
     const r = await handleTelegramCommand('salam, btc chetore?', {});
     assert.equal(r.handled, false);
   });
-  it('/settings bedune memory ham kar mikone (env-only)', async () => {
+  it('/settings bedune memory ham kar mikone + HAME ro neshun mide (na 4 key)', async () => {
     const r = await handleTelegramCommand('/settings', {});
     assert.equal(r.handled, true);
     assert.ok(r.reply.includes('symbol='));
     assert.ok(r.reply.includes('SETTINGS'));
+    // HAMEYE 26 key bayad bashan (fix-e "faghat 4 key + base url")
+    for (const k of ['symbol=', 'leverage=', 'timeframes=', 'min_confidence=', 'max_positions=', 'cooldown_minutes=', 'reversal_confidence=']) {
+      assert.ok(r.reply.includes(k), `settings bayad ${k} ro dashte bashe (HAME, na 4 key): ${r.reply.slice(0, 300)}`);
+    }
   });
   it('/diag key ha ro neshoon mide', async () => {
     const r = await handleTelegramCommand('/diag', { getModel: () => 'test-model' });

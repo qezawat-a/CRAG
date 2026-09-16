@@ -13,12 +13,13 @@ import { startGateway } from './gateway.js';
 import { startHarness } from './harness.js';
 
 export class Services {
-  constructor({ getSettings, say, agentName = 'agent', getModel, log = console.log }) {
+  constructor({ getSettings, say, agentName = 'agent', getModel, log = console.log, trader = null }) {
     this.getSettings = getSettings;
     this.say = say;
     this.agentName = agentName;
     this.getModel = getModel;
     this.log = log;
+    this.trader = trader;
 
     this.serveHandle = null;
     this.gatewayHandle = null;
@@ -73,6 +74,7 @@ export class Services {
       getModel: this.getModel,
       agentName: this.agentName,
       log: this.log,
+      trader: this.trader,
     });
   }
 

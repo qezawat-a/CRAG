@@ -3,14 +3,18 @@
 // - Auth: faghat TELEGRAM_USER_ID (allowlist) javab migire; baghie "Unauthorized."
 // - Command ha (/start /status /balance /signal /pnl /settings /check_ai /close /diag)
 //   mostaghim ejra mishan (telegram-commands.js, port-e CryptoMind-XT).
+// - Trader commands (/autotrade_on /set /get /sync /trades ...) ham mostaghim
+//   (telegram-trader.js — shared ba telegram-bot.js, ta Unknown nadim).
 // - Baghie payam ha miran be agent (onMessage = queuedSay-e TUI) — agent az
-//   tool haye xt_* estefade mikone (scan/open/close/tpsl...).
+//   tool haye trader_* + xt_* estefade mikone.
 // - Javab ha chunk (4096) mishan. Token az settings.gateway.token ya
 //   env TELEGRAM_BOT_TOKEN. getMe + setMyCommands dar start.
 //   settings.gateway = { enabled, messenger:'telegram', token, userId }
+// - AGENT-ONLY: trade settings FAGHAT az store, .env ignore.
 
 import { createTelegramApi } from './telegram.js';
 import { handleTelegramCommand, TG_COMMANDS } from './telegram-commands.js';
+import { TRADER_COMMANDS, handleTraderCommand as sharedTraderCommand } from './telegram-trader.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -22,7 +26,7 @@ export function resolveTelegramConfig(s) {
   return { token, userId: String(userId || '').trim() };
 }
 
-export function startGateway({ messenger = '', token = '', userId = '', onMessage, getModel, agentName = 'agent', log = console.log }) {
+export function startGateway({ messenger = '', token = '', userId = '', onMessage, getModel, agentName = 'agent', log = console.log, trader = null } = {}) {
   const name = String(messenger || 'telegram').toLowerCase();
 
   if (name !== 'telegram') { log(`[gateway] messenger '${messenger}' support nist (faghat telegram).`); return null; }
@@ -57,13 +61,19 @@ export function startGateway({ messenger = '', token = '', userId = '', onMessag
     // typing... (ta user befahme darim kar mikonim)
     tg.sendChatAction(chatId, 'typing').catch(() => {});
 
-    // 1) command ha mostaghim (sari, bedune LLM)
+    const t = String(text).trim();
+    const parts = t.startsWith('/') ? t.slice(1).split(/\s+/) : [];
+    const cmd = t.startsWith('/') ? (parts[0] || '').toLowerCase().split('@')[0] : '';
+    const args = parts.slice(1);
+
+    // 1) command ha mostaghim (sari, bedune LLM) — base
     try {
-      const cmd = await handleTelegramCommand(text, {
-        say: onMessage, getModel, agentName,
+      const mem = trader ? trader.memory : null;
+      const cmdRes = await handleTelegramCommand(t, {
+        say: onMessage, getModel, agentName, memory: mem, trader, traderCommands: TRADER_COMMANDS,
       });
-      if (cmd && cmd.handled) {
-        await tg.sendMessage(chatId, cmd.reply);
+      if (cmdRes && cmdRes.handled) {
+        await tg.sendMessage(chatId, cmdRes.reply);
         return;
       }
     } catch (e) {
@@ -71,7 +81,31 @@ export function startGateway({ messenger = '', token = '', userId = '', onMessag
       return;
     }
 
-    // 2) chat-e tabii -> agent (ba tool haye XT)
+    // 2) trader commands (shared — Unknown nadim)
+    if (cmd) {
+      try {
+        const tr = await sharedTraderCommand(cmd, args, { trader });
+        if (tr.handled) {
+          await tg.sendMessage(chatId, tr.reply);
+          return;
+        }
+      } catch (e) {
+        await tg.sendMessage(chatId, `Error: ${e.message}`);
+        return;
+      }
+      // 3) Unknown /command -> be agent forward kon (na "Unknown command").
+      //    Agent ba trader_* tools mitune javab bede (mesal "/settings" ya Farsi).
+      try {
+        const out = await onMessage(t, { chatId, from: msg.from, source: 'telegram' });
+        const reply = out && out.reply !== undefined ? out.reply : String(out);
+        await tg.sendMessage(chatId, reply || '(javabi nabud)');
+      } catch (e) {
+        await tg.sendMessage(chatId, `Error: ${e.message}`);
+      }
+      return;
+    }
+
+    // 4) chat-e tabii -> agent (ba tool haye trader_* + XT)
     try {
       const out = await onMessage(text, { chatId, from: msg.from, source: 'telegram' });
       const reply = out && out.reply !== undefined ? out.reply : String(out);
@@ -90,7 +124,7 @@ export function startGateway({ messenger = '', token = '', userId = '', onMessag
         log(`[gateway] telegram roshan shod${uname ? ` (@${uname})` : ''} — montazer-e payam...`);
         if (!allowId) log('[gateway] HOSHDAR: TELEGRAM_USER_ID tanzim nist — hame mitunan payam bedan! (userId ro set kon)');
         else log(`[gateway] allowlist: user ${allowId} (baghie Unauthorized)`);
-        try { await tg.setMyCommands(TG_COMMANDS); } catch {}
+        try { await tg.setMyCommands([...TG_COMMANDS, ...TRADER_COMMANDS]); } catch {}
       } else if (me && me.ok === false) {
         log(`[gateway] token ghalat-e: ${me.description || ''}`);
         running = false;
@@ -121,4 +155,3 @@ export function startGateway({ messenger = '', token = '', userId = '', onMessag
     },
   };
 }
-

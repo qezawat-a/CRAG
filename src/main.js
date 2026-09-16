@@ -47,7 +47,8 @@ catch (e) {
   process.exit(1);
 }
 memory.seedDefaults();
-log(`[main] store ready: ${memory.persistence} (settings: ${Object.keys(memory.getAllSettings()).length})`);
+Config.warnIfLegacyTradeEnv(log);
+log(`[main] store ready: ${memory.persistence} (settings: ${Object.keys(memory.getAllSettings()).length}) — trade settings agent-only (az store, na .env)`);
 if (memory.backend.kind === 'file') {
   log('[main] HOSHDAR: DATABASE_URL nist — state faghat tu file-e mahali mimune; ru deploy-e ephemeral (Railway/Heroku) har deploy PAK mishe. Neon Postgres vasl kon (README).');
 }
@@ -82,7 +83,8 @@ try {
     thinkingLevel: s.thinking.level,
     extra: `This build also runs the XT futures TRADER bot. Tools with prefix trader_ control the autonomous trading loop
 (status, scan, auto_trade, open/close, settings, protect, midmanage, sync, diag). Trade summary is available via trader_trade_history.
-Always respect XT_DRY_RUN: while it is 1, real orders are never sent.`,
+Always respect XT_DRY_RUN: while it is 1, real orders are never sent.
+TRADER SETTINGS ARE AGENT-ONLY: trade settings live ONLY in the store (LongTermMemory) and are managed ONLY via trader_settings_get/trader_settings_set (or Telegram /settings + /set, TUI /tsettings + /tset). NEVER read trade tuning from .env — .env trade vars are IGNORED. When the user asks for settings in ANY language (e.g. "/settings", "setting o neshun bede", "settings ro neshun bede"), ALWAYS call trader_settings_get and show ALL 26 keys — NEVER truncate to 4 keys + base url.`,
   });
   agent = createAgent({
     system,

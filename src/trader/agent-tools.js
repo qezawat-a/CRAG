@@ -3,9 +3,29 @@
 // Ba in tool-ha agent-e xt-agent (soul/skills/prompt) mitune bot-e
 // trader ro control kone: status, autotrade on/off, open/close trade,
 // settings, protect/midmanage/sync. Name ha ba prefix trader_ hastand.
+// AGENT-ONLY: trade settings FAGHAT via in tool-ha (store), .env ignore.
+// HAMEYE settings bayad neshun dade beshan (na faghat 4 key + base url).
+import { Config } from '../config.js';
+
 const S = (desc, props, req = []) => ({ type: 'object', properties: props, required: req, additionalProperties: false });
 const STR = (d) => ({ type: 'string', description: d });
 const INT = (d) => ({ type: 'integer', description: d });
+
+function formatAllSettings(memory) {
+  const defs = Config.defaultSettings();
+  const stored = memory ? memory.getAllSettings() : {};
+  const lines = ['=== TRADER SETTINGS (az store — agent-only, HAME) ==='];
+  for (const [k, defVal] of Object.entries(defs)) {
+    const cur = stored[k] !== undefined ? String(stored[k]) : String(defVal);
+    const meta = Config.TRADER_SETTING_DEFS?.[k];
+    const label = meta?.label ? ` — ${meta.label}` : '';
+    const isDef = String(cur) === String(defVal);
+    lines.push(`${k}=${cur}${isDef ? '' : ` (default: ${defVal})`}${label}`);
+  }
+  lines.push('');
+  lines.push('Trade settings FAGHAT az inja avaz mishan (trader_settings_set) — .env ignore mishe.');
+  return lines.join('\n');
+}
 
 export function traderTools(trader, { agentName = 'crypto-agent' } = {}) {
   return [
@@ -60,18 +80,20 @@ export function traderTools(trader, { agentName = 'crypto-agent' } = {}) {
     },
     {
       name: 'trader_settings_get',
-      description: 'Tamame settings-e trading (symbol, leverage, timeframes, min_confidence, ...).',
+      description: 'HAMEYE settings-e trading ro neshun bede (26 key: symbol, leverage, timeframes, min_confidence, ...). Vaghti user mige "/settings" ya "setting o neshun bede" (hatta Farsi), HATMAN in tool ro seda bezan va HAMEYE khuruji ro be user neshun bede — hich key ro hazf ya kholase NAKON (na faghat 4 key).',
       parameters: S('g', {}),
-      async run() { return JSON.stringify(trader.memory.getAllSettings(), null, 2); },
+      async run() { return formatAllSettings(trader.memory); },
     },
     {
       name: 'trader_settings_set',
-      description: 'Setting set kon. Mesal: {key:"min_confidence", value:"75"} ya {key:"symbol", value:"eth_usdt"}.',
-      parameters: S('st', { key: STR('setting key'), value: STR('value (string)') }, ['key', 'value']),
+      description: 'Yek setting-e trading set kon (agent-only, dar store zakhire mishe, ba restart NEMIPARE). Valid keys: symbol, leverage, position_type, timeframes, margin_amount_pct, margin_risk_pct, min_confidence, tf_min_confidence, min_agreeing_strategies, signal_confirm_scans, cooldown_minutes, max_positions, position_mode, scan_interval_sec, guard_interval_sec, breakeven_threshold_pct, trailing_stop_pct, trailing_trigger_roi_pct, trailing_distance_pct, sl_liquidation_safety, on_tpsl_failure, reversal_enabled, reversal_confidence, report_interval_sec, mid_manage_interval_sec. Mesal: {key:"min_confidence", value:"75"} ya {key:"leverage", value:"10"}. Alias: margin_mode -> position_type.',
+      parameters: S('st', { key: STR('setting key (mesal leverage)'), value: STR('value (string, mesal "10")') }, ['key', 'value']),
       async run(a) {
-        if (!a.key || a.value === undefined) return 'key va value lazem ast.';
-        trader.memory.setSetting(a.key, a.value);
-        return `set ${a.key} = ${a.value}`;
+        if (!a.key || a.value === undefined) return 'key va value lazem ast. Mesal: {key:"leverage", value:"10"}. Baraye didan-e HAME: trader_settings_get.';
+        const v = Config.validateSetting(a.key, a.value);
+        if (!v.ok) return `set failed: ${v.error}\nBaraye didan-e HAME: trader_settings_get.`;
+        trader.memory.setSetting(v.key, v.normalized);
+        return `set ${v.key} = ${v.normalized} (OK, zakhire shod — ba restart NEMIPARE)`;
       },
     },
     {

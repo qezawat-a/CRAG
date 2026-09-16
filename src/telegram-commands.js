@@ -11,25 +11,32 @@ import { Config } from './config.js';
 function xtCfg() {
   return { host: process.env.XT_FUTURES_HOST || 'https://fapi.xt.com', accessKey: process.env.XT_API_KEY || '', secretKey: process.env.XT_API_SECRET || '' };
 }
-// symbol-e mo'aser: store (ke trader estefade mikone) -> env -> 'btc_usdt'
+// symbol-e mo'aser: store (ke trader estefade mikone) -> static default -> 'btc_usdt'
+// AGENT-ONLY: .env baraye trade KHANDE NEMISHE.
 function defSym(ctx = null) {
   if (ctx && ctx.memory) { const s = ctx.memory.getSetting('symbol', null); if (s) return s; }
-  return process.env.XT_DEFAULT_SYMBOL || process.env.DEFAULT_SYMBOL || 'btc_usdt';
+  return Config.DEFAULT_SYMBOL || 'btc_usdt';
 }
-function tfs() { return String(process.env.XT_TIMEFRAMES || '1m,3m,5m,15m').split(',').map((x) => x.trim()).filter(Boolean); }
+function tfs(ctx = null) {
+  if (ctx && ctx.memory) {
+    const s = ctx.memory.getSetting('timeframes', null);
+    if (s) return String(s).split(',').map((x) => x.trim()).filter(Boolean);
+  }
+  return [...Config.DEFAULT_TIMEFRAMES];
+}
 export const TG_COMMANDS = [
   { command: 'start', description: 'Help + list-e command ha' },
   { command: 'status', description: 'Balance + positions + price' },
   { command: 'balance', description: 'Balance-e futures' },
   { command: 'signal', description: 'Scan-e signal multi-timeframe' },
   { command: 'pnl', description: 'PnL-e position haye baz' },
-  { command: 'settings', description: 'Tanzimat-e trading' },
+  { command: 'settings', description: 'HAMEYE tanzimat-e trading (az store)' },
   { command: 'check_ai', description: 'Test-e AI connection' },
   { command: 'close', description: 'Close position: /close SYMBOL SIDE' },
   { command: 'diag', description: 'Diagnose: key/setting ha' },
 ];
 export function startText(agentName) {
-  return `${agentName} Ready!\n\nCommands:\n/status - Balance + positions + price\n/balance - Balance\n/signal [symbol] - Scan signals\n/pnl [symbol] - PnL baz\n/settings - Tanzimat\n/check_ai - Test AI\n/close SYMBOL SIDE - Bastan-e position (mesal /close btc_usdt LONG)\n/diag - Check key/setting ha\n\nMituni normal chat koni — mesal: "btc ro scan kon" ya "balance cheghadr-e?" (agent az tool haye xt_* estefade mikone).`;
+  return `${agentName} Ready!\n\nCommands:\n/status - Balance + positions + price\n/balance - Balance\n/signal [symbol] - Scan signals\n/pnl [symbol] - PnL baz\n/settings - HAMEYE tanzimat (az store, agent-only)\n/get key - Yek setting (mesal /get leverage)\n/set key value - Avaz-e setting (mesal /set leverage 10)\n/check_ai - Test AI\n/close SYMBOL SIDE - Bastan-e position (mesal /close btc_usdt LONG)\n/diag - Check key/setting ha\n\nTrader: /autotrade_on /autotrade_off /open /close_all /protect /midmanage /sync /trades /reset_cooldown /reset_settings /dryrun\n\nMituni normal chat koni — mesal: "btc ro scan kon" ya "balance cheghadr-e?" ya "setting o neshun bede" (agent az tool haye trader_* estefade mikone).`;
 }
 // handleTelegramCommand(text, ctx) -> { handled: bool, reply: string }
 // ctx: { say, getModel, agentName }
@@ -73,8 +80,13 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         return { handled: true, reply: 'Balance:\n' + bal.map((r) => `  ${r.coin}: wallet=${r.walletBalance} avail=${r.availableBalance}`).join('\n') };
       }
       case 'signal': {
-        const s = args[0] || defSym();
-        const r = await scanMultiTimeframe(xt, s, tfs(), { minConfidence: 70, tfMinConfidence: 60, minAgree: 1 });
+        const s = args[0] || defSym(ctx);
+        const ivs = tfs(ctx);
+        // AGENT-ONLY: threshold ha az store (na hardcoded, na .env)
+        const mc = ctx.memory ? ctx.memory.getInt('min_confidence', Config.MIN_CONFIDENCE) : Config.MIN_CONFIDENCE;
+        const tfmc = ctx.memory ? ctx.memory.getInt('tf_min_confidence', Config.TF_MIN_CONFIDENCE) : Config.TF_MIN_CONFIDENCE;
+        const ma = ctx.memory ? ctx.memory.getInt('min_agreeing_strategies', Config.MIN_AGREEING_STRATEGIES) : Config.MIN_AGREEING_STRATEGIES;
+        const r = await scanMultiTimeframe(xt, s, ivs, { minConfidence: mc, tfMinConfidence: tfmc, minAgree: ma });
         r.price = await getCurrentPrice(xt, s).catch(() => 0);
         let out = `=== SIGNAL [${s}] ===\nDirection: ${r.direction}\nConfidence: ${r.confidence}%\nPrice: ${r.price}\nLongW: ${r.longWeight.toFixed(2)} ShortW: ${r.shortWeight.toFixed(2)}\n`;
         if (r.strategiesUsed && r.strategiesUsed.length) out += `Strategies: ${r.strategiesUsed.join(',')}\n`;
@@ -96,31 +108,22 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         return { handled: true, reply: out };
       }
       case 'settings': {
-        // /settings = meghdar-e MOASER (hamun ke trader estefade mikone) + fargh ba .env.
-        // Store avvalavi-e: seedDefaults faghat ja-haye khali ro por mikone, pas
-        // .env-e avaz-shode khod-be-khod ejra NEMISHE (bekhun: /reseed).
-        const envDefs = Config.defaultSettings();
-        const diff = memory && memory.envDiff ? memory.envDiff() : null;
-        const lines = ['=== SETTINGS (effective) ==='];
-        let mism = 0;
-        for (const [k, envVal] of Object.entries(envDefs)) {
-          const d = diff ? diff[k] : { stored: null, env: String(envVal), diff: false };
-          const eff = d.stored === null ? String(envVal) : d.stored;
-          const src = d.stored === null ? 'env' : 'store';
-          let line = `${k}=${eff} [${src}]`;
-          if (d.diff) { mism++; line += `  (env: ${envVal} — ejra NEMISHE)`; }
-          lines.push(line);
-        }
-        // env-haye aliasing ke hamzaman set mishan (avvali avvalavi-e)
-        const ALIASES = { symbol: ['XT_DEFAULT_SYMBOL', 'DEFAULT_SYMBOL'], timeframes: ['XT_TIMEFRAMES', 'DEFAULT_TIMEFRAMES'] };
-        for (const [k, names] of Object.entries(ALIASES)) {
-          const set = names.filter((n) => process.env[n] !== undefined && process.env[n] !== '');
-          if (set.length > 1) lines.push(`! ${k}: chand env set-e (${set.map((n) => `${n}=${process.env[n]}`).join(' , ')}) — avvali avvalavi-e`);
+        // /settings = HAMEYE settings-e MOASER az store (agent-only).
+        // .env baraye trade KHANDE NEMISHE — pas hich "ejra NEMISHE" confusion nist.
+        // Hadaf: user vaghti mighe "/settings" ya "setting o neshun bede",
+        // HAMISHE hameye 26 key ro bebine (na faghat 4 key + base url).
+        const defs = Config.defaultSettings();
+        const storedAll = memory ? memory.getAllSettings() : {};
+        const lines = ['=== SETTINGS (az store — agent-only, HAME) ==='];
+        for (const [k, defVal] of Object.entries(defs)) {
+          const cur = storedAll[k] !== undefined ? String(storedAll[k]) : String(defVal);
+          const isDef = String(cur) === String(defVal);
+          lines.push(`${k}=${cur}${isDef ? '' : ` (default: ${defVal})`}`);
         }
         lines.push(`host=${xtCfg().host} dryRun=${process.env.XT_DRY_RUN || '0'} key=${process.env.XT_API_KEY ? 'set (' + String(process.env.XT_API_KEY).slice(0, 4) + '...)' : '(nist)'}`);
-        if (memory) lines.push(`store=${memory.persistence}`);
-        if (mism) lines.push(`\n${mism} key ba .env fargh dare vali store avvalavi-e → /reseed bezan ta .env ejra beshe.`);
-        lines.push('Tanzim: /set key value (mesal /set leverage 10)');
+        if (memory) lines.push(`store=${memory.persistence} (settings: ${Object.keys(storedAll).length})`);
+        lines.push('Tanzim: /set key value (mesal /set leverage 10) | /get key | /reset_settings');
+        lines.push('Note: trade settings FAGHAT az injan (TUI/Telegram/agent) — .env ignore mishe.');
         return { handled: true, reply: lines.join('\n') };
       }
       case 'check_ai': {
@@ -152,9 +155,9 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         }
         return { handled: true, reply: lines.join('\n') };
       }
-      // NOTE: command-haye trader (/autotrade_on /open /set /sync /protect /trades
-      // /reset_cooldown /close_all /reseed ...) inja handle NEMISHAN — bayad
-      // handled:false bargardoonim ta telegram-bot.js be handleTraderCommand
+      // NOTE: command-haye trader (/autotrade_on /open /set /get /sync /protect /trades
+      // /reset_cooldown /close_all /reset_settings /reseed /dryrun ...) inja handle NEMISHAN — bayad
+      // handled:false bargardoonim ta telegram-bot.js / gateway.js be handleTraderCommand
       // berese. (ghabl-an hamin ja 'Unknown command' midad va 10 command-e
       // trader hich vaght ejra nemishod.)
       default:
