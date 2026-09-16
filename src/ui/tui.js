@@ -51,8 +51,19 @@ await store.load();
 // --- Trader store (agent-only settings) ---
 // TUI ham mesl-e main.js be hamun store vasl-e (file ya DATABASE_URL),
 // ta /tsettings + agent chat ("setting o neshun bede") HAME ro neshun bedan.
-const traderMemory = new LongTermMemory();
-try { await traderMemory.init(); } catch (e) { console.log(`[tui] store init failed: ${e.message}`); }
+// Age DB (Neon) vasl nashod -> khodkar fallback be file (ta TUI بالا بیاد).
+let traderMemory = new LongTermMemory();
+try {
+  await traderMemory.init();
+} catch (e) {
+  console.log(`[tui] store init failed (${traderMemory.backend.kind}): ${e.message}`);
+  if (traderMemory.backend.kind !== 'file') {
+    console.log('[tui] fallback be file-e mahali (data/trader-store.json) — DATABASE_URL ro ba `npm run db:check` check kon.');
+    try { await traderMemory.close(); } catch {}
+    traderMemory = new LongTermMemory(null, { databaseUrl: null });
+    await traderMemory.init();
+  }
+}
 traderMemory.seedDefaults();
 Config.warnIfLegacyTradeEnv(console.log);
 const trader = new XTTrader(traderMemory);

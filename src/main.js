@@ -39,12 +39,19 @@ if (missing.length) {
 }
 
 // ---------- 2) memory store (seed defaults + legacy cleanup) ----------
-const memory = new LongTermMemory();
+let memory = new LongTermMemory();
 try { await memory.init(); }
 catch (e) {
-  log(`[main] FATAL: store init failed (${memory.backend.kind}): ${e.message}`);
-  log('[main] DATABASE_URL ro check kon — ya barash dar biar ta file-e mahali (data/trader-store.json) estefade beshe.');
-  process.exit(1);
+  log(`[main] store init failed (${memory.backend.kind}): ${e.message}`);
+  if (memory.backend.kind !== 'file') {
+    log('[main] fallback be file-e mahali (data/trader-store.json) — DATABASE_URL ro ba `npm run db:check` check kon.');
+    try { await memory.close(); } catch {}
+    memory = new LongTermMemory(null, { databaseUrl: null });
+    await memory.init();
+  } else {
+    log('[main] FATAL: file store ham bala nayamad.');
+    process.exit(1);
+  }
 }
 memory.seedDefaults();
 Config.warnIfLegacyTradeEnv(log);
