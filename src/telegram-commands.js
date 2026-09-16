@@ -6,7 +6,7 @@
 import { XTClient } from './xt/client.js';
 import { RiskManager } from './xt/risk.js';
 import { PositionManager } from './xt/positions.js';
-import { scanMultiTimeframe, getCurrentPrice } from './xt/scanner.js';
+import { scanMultiTimeframe, getCurrentPrice, getCurrentPriceDetailed } from './xt/scanner.js';
 function xtCfg() {
   return { host: process.env.XT_FUTURES_HOST || 'https://fapi.xt.com', accessKey: process.env.XT_API_KEY || '', secretKey: process.env.XT_API_SECRET || '' };
 }
@@ -46,9 +46,10 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         const [bal, pos, px] = await Promise.all([
           xt.getBalances().catch((e) => ({ error: e.message })),
           xt.getPositions().catch((e) => ({ error: e.message })),
-          getCurrentPrice(xt, s).catch(() => 0),
+          getCurrentPriceDetailed(xt, s).catch((e) => ({ price: 0, error: e.message })),
         ]);
-        let out = `=== STATUS [${s}] ===\nPrice: ${px}\n`;
+        let out = `=== STATUS [${s}] ===\n`;
+        out += px.error ? `Price: error (${px.error})\n` : `Price: ${px.price}\n`;
         if (bal.error) out += `Balance: error (${bal.error})\n`;
         else { const u = (Array.isArray(bal) ? bal : []).find((r) => String(r.coin || '').toUpperCase() === 'USDT') || {}; out += `Balance: ${u.walletBalance ?? '?'} USDT | Available: ${u.availableBalance ?? '?'} USDT\n`; }
         if (pos.error) out += `Positions: error (${pos.error})`;

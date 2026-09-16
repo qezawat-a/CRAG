@@ -4,7 +4,7 @@
 import { XTClient } from './client.js';
 import { RiskManager } from './risk.js';
 import { PositionManager } from './positions.js';
-import { scanMultiTimeframe, getCurrentPrice, fetchCandles } from './scanner.js';
+import { scanMultiTimeframe, getCurrentPrice, getCurrentPriceDetailed, fetchCandles } from './scanner.js';
 function cfg() {
   return {
     host: process.env.XT_FUTURES_HOST || 'https://fapi.xt.com',
@@ -46,7 +46,7 @@ export function xtFuturesTools({ getSetting } = {}) {
     { name: 'xt_tpsl_cancel', description: 'Cancel TP/SL ba profitId.', parameters: S('t', { profitId: STR('id') }, ['profitId']), async run(a) { const xt = client(); return JSON.stringify(await xt.cancelTpsl(a.profitId)); } },
     { name: 'xt_tpsl_list', description: 'List-e TP/SL haye baz (NOT_TRIGGERED).', parameters: S('t', { symbol: STR('symbol') }, ['symbol']), async run(a) { const xt = client(); return JSON.stringify(await xt.getTpslOrders(a.symbol)); } },
     { name: 'xt_history', description: 'Tarikhche: orders/trades/positions (kind).', parameters: S('h', { symbol: STR('symbol (optional)'), kind: STR('orders|trades|positions|tpsl'), page: INT('(default 1)'), size: INT('(default 10)') }), async run(a) { const xt = client(); const k = (a.kind || 'orders').toLowerCase(); const o = { symbol: a.symbol || null, page: a.page || 1, size: a.size || 10 }; if (k === 'trades') return JSON.stringify(await xt.getAllTrades(o.symbol)); if (k === 'positions') return JSON.stringify(await xt.getPositionHistory(o)); if (k === 'tpsl') return JSON.stringify(await xt.getTpslHistory(o)); return JSON.stringify(await xt.getOrderTradeHistory(o)); } },
-    { name: 'xt_status', description: 'Status-e sari: balance + positions + price-e default symbol.', parameters: S('s', { symbol: STR('symbol (optional)') }), async run(a) { const xt = client(); const s = a.symbol || DEF(); const [bal, pos, px] = await Promise.all([xt.getBalances().catch((e) => ({ error: e.message })), xt.getPositions().catch((e) => ({ error: e.message })), getCurrentPrice(xt, s)]); return JSON.stringify({ symbol: s, price: px, balances: bal, positions: pos }); } },
+    { name: 'xt_status', description: 'Status-e sari: balance + positions + price-e default symbol.', parameters: S('s', { symbol: STR('symbol (optional)') }), async run(a) { const xt = client(); const s = a.symbol || DEF(); const [bal, pos, px] = await Promise.all([xt.getBalances().catch((e) => ({ error: e.message })), xt.getPositions().catch((e) => ({ error: e.message })), getCurrentPriceDetailed(xt, s).catch((e) => ({ price: 0, error: e.message }))]); return JSON.stringify({ symbol: s, price: px.price, priceError: px.error || null, balances: bal, positions: pos }); } },
     { name: 'xt_dry_run', description: 'DRY_RUN ro on/off kon (1/0). Vaghti on-e order/tpsl/close ejra NEMISHAN.', parameters: S('d', { enabled: STR('1|0|true|false') }, ['enabled']), async run(a) { const v = ['1', 'true', 'yes', 'on'].includes(String(a.enabled).toLowerCase()) ? '1' : '0'; process.env.XT_DRY_RUN = v; return `XT_DRY_RUN=${v} (${v === '1' ? 'order ha preview mishan, ejra NEMISHAN' : 'order ha VAGHEI ejra mishan — movazeb bash'})`; } },
   ];
 }

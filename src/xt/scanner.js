@@ -79,3 +79,22 @@ export async function getCurrentPrice(xt, symbol) {
   try { const m = await xt.getMarkPrice(symbol); const p = Number(m.p || m.markPrice || 0); if (p > 0) return p; } catch {}
   return 0;
 }
+// getCurrentPriceDetailed: mesl-e getCurrentPrice vali error ro gom NEMIKONE.
+// (ghabl-an /status vaghti network down bud "Price: 0" neshoon midad — in
+//  model-e ghalat bud va dalil-e asli (fetch failed) dide nemishod.)
+export async function getCurrentPriceDetailed(xt, symbol) {
+  const errs = [];
+  try {
+    const t = await xt.getAggTicker(symbol);
+    const p = Number(t.c || 0);
+    if (p > 0) return { price: p, error: null };
+    errs.push('agg-ticker: gheymat-e 0');
+  } catch (e) { errs.push(`agg-ticker: ${e.message}`); }
+  try {
+    const m = await xt.getMarkPrice(symbol);
+    const p = Number(m.p || m.markPrice || 0);
+    if (p > 0) return { price: p, error: null };
+    errs.push('mark-price: gheymat-e 0');
+  } catch (e) { errs.push(`mark-price: ${e.message}`); }
+  return { price: 0, error: errs.join(' | ') };
+}

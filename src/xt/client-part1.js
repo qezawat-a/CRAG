@@ -8,14 +8,32 @@ export const USER = '/future/user';
 export const TRADE = '/future/trade';
 const NO_RETRY_SUFFIXES = ['/order/create','/order/create-batch','/entrust/create-profit','/entrust/create-plan','/entrust/create-track'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const DEFAULT_RETRY_BASE_MS = 500;
+// Error-e network-e undici ('fetch failed') dalil-e vaghei ro tu cause gom mikone
+// (EAI_AGAIN / ECONNRESET / ECONNREFUSED / ENOTFOUND / ETIMEDOUT / abort) — inja
+// minevisimesh ta tu /status, /diag va log ha dalil-e vaghei dide beshe
+// (ghabl-an faghat "fetch failed" dide mishod va nemishe fahmid chi shode).
+export function describeFetchError(e, timeoutMs = 0) {
+  if (!e) return 'request failed';
+  const msg = String(e.message || e);
+  const cause = e.cause;
+  if (e.name === 'AbortError' || /aborted/i.test(msg)) return `timeout after ${timeoutMs}ms (request aborted)`;
+  const code = cause && (cause.code || cause.name);
+  if (code) return `${msg} (${code})`;
+  if (cause && cause.message) return `${msg} (${String(cause.message).slice(0, 80)})`;
+  return msg;
+}
 export class XTBase {
-  constructor({ host, accessKey, secretKey, timeoutMs = 10000 } = {}) {
+  constructor({ host, accessKey, secretKey, timeoutMs = 10000, retryBaseMs = process.env.XT_RETRY_BASE_MS ?? DEFAULT_RETRY_BASE_MS, minRequestIntervalMs = process.env.XT_MIN_REQUEST_MS ?? 100 } = {}) {
     this.host = String(host || process.env.XT_FUTURES_HOST || 'https://fapi.xt.com').replace(/\/$/, '');
     this._ak = accessKey ?? process.env.XT_API_KEY ?? '';
     this._sk = secretKey ?? process.env.XT_API_SECRET ?? '';
     this.timeoutMs = timeoutMs;
+    const base = Number(retryBaseMs);
+    this.retryBaseMs = Number.isFinite(base) && base >= 0 ? base : DEFAULT_RETRY_BASE_MS;
+    const interval = Number(minRequestIntervalMs);
+    this.minRequestInterval = Number.isFinite(interval) && interval >= 0 ? interval : 100;
     this.lastRequestTime = 0;
-    this.minRequestInterval = 100;
   }
   async _rateLimit() {
     const now = Date.now();
@@ -51,11 +69,11 @@ export class XTBase {
         finally { clearTimeout(timer); }
         if (resp.status === 429) {
           if (noRetry) throw new XTError(`${path} -> HTTP 429 (not retried — order endpoint)`);
-          await sleep(Math.min(1000 * 2 ** attempt, 8000)); continue;
+          await sleep(Math.min(this.retryBaseMs * 2 ** (attempt + 1), 8000)); continue;
         }
         if (resp.status >= 500) {
           if (noRetry) throw new XTError(`${path} -> HTTP ${resp.status} (not retried — order endpoint)`);
-          await sleep(Math.min(500 * 2 ** attempt, 4000)); continue;
+          await sleep(Math.min(this.retryBaseMs * 2 ** attempt, 4000)); continue;
         }
         const text = await resp.text();
         let payload;
@@ -64,13 +82,14 @@ export class XTBase {
         return XTBase._unwrap(payload, path);
       } catch (e) {
         lastErr = e;
-        if (noRetry) throw e;
         if (e instanceof XTError) throw e;
-        if (attempt < maxRetries - 1) { await sleep(Math.min(500 * 2 ** attempt, 4000)); continue; }
-        throw new XTError(`${path} -> ${e.message}`);
+        if (noRetry) throw new XTError(`${path} -> ${describeFetchError(e, this.timeoutMs)}`);
+        if (attempt < maxRetries - 1) { await sleep(Math.min(this.retryBaseMs * 2 ** attempt, 4000)); continue; }
+        throw new XTError(`${path} -> ${describeFetchError(e, this.timeoutMs)}`);
       }
     }
-    throw lastErr || new XTError(`${path} -> request failed`);
+    if (lastErr instanceof XTError) throw lastErr;
+    throw new XTError(`${path} -> ${describeFetchError(lastErr, this.timeoutMs)}`);
   }
   _public(m, p, q) { return this._request(m, p, q, false); }
   _private(m, p, q) { return this._request(m, p, q, true); }
