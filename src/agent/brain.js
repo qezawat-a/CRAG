@@ -14,12 +14,16 @@
 // 402 / insufficient_quota begirim, khodkar mire soragh-e badi.
 
 import { detectProviders, geminiOpenAiBaseUrl } from './config.js';
-import { listProviderModels, rankModels, isBalanceError, FALLBACK_MODEL } from './auto-model.js';
+import {
+  listProviderModels, rankModels, isBalanceError, shouldAdvanceModel,
+  fallbackCandidates, loadModelCache, saveModelCache, FALLBACK_MODEL,
+} from './auto-model.js';
 import { openaiReasoning, anthropicThinking } from './thinking.js';
 
 const MAX_TOKENS = 2048;        // had-e toole javab (anthropic lazeme)
 const TIMEOUT_MS  = 60000;      // har request max 60 sanie
-const PROBE_TIMEOUT_MS = 15000; // probe-e model max 15 sanie
+const PROBE_TIMEOUT_MS = 12000; // probe-e model max 12 sanie (sari-tar)
+const PROBE_MAX_MODELS = 10;    // hadaksar in-ta candidate probe mishe (ta daghight-ha tal Nash-e)
 
 // ----------------------------------------------------------------
 // item 15 — auto-refresh model-ha (TTL): az env mikhunim ta brain
@@ -207,23 +211,45 @@ async function ensureModelState(p) {
     _modelState.delete(key); // ttl gozasht — dobare list + probe (item 15)
   }
 
+  // cache-e persisted (restart-haye ghabl) — bi-probe, faghat be-surat
+  // az data/model-cache.json. Agar refresh TTL gozashte bashe dobare probe
+  // mishe, vagar-na hamin mishe.
+  if (!p.model) {
+    const persisted = loadModelCache(key);
+    if (persisted) {
+      if (!refresh || Date.now() - (persisted.at || 0) < ttl) {
+        const state = {
+          source: 'cache', candidates: persisted.candidates || [persisted.chosen],
+          index: persisted.index || 0, chosen: persisted.chosen, at: Date.now(),
+        };
+        _modelState.set(key, state);
+        p.model = state.chosen;
+        console.log(`[auto-model] ${p.name}: model az cache = '${state.chosen}' (data/model-cache.json)`);
+        return state;
+      }
+    }
+  }
+
   let state;
   if (p.model) {
     // user model ro DASTI tu .env gozashte — bi-probe, garantee:
     state = { source: 'explicit', candidates: [p.model], index: 0, chosen: p.model };
   } else {
     const ids = await listProviderModels(p, { ttlMs: refresh ? ttl : 0 });
-    const candidates = ids.length ? rankModels(ids) : [FALLBACK_MODEL];
-    const probed = await probeModels(p, candidates); // avalin modeli ke javab mide
-    const chosen = probed || candidates[0];
+    // /models khali/khata -> list-e amade (OpenRouter-id-ha, gemini-ha, ...)
+    const ranked = ids.length ? rankModels(ids) : fallbackCandidates(p);
+    const candidates = ranked.length ? ranked : [FALLBACK_MODEL];
+    const probed = await probeModels(p, candidates); // avalin modeli ke VAGHEAN javab mide
+    const chosen = probed || candidates[0]; // hichi nakard -> avalin candidate (fallback dar chat)
     state = {
       source: 'auto',
       candidates,
-      index: candidates.indexOf(chosen),
+      index: candidates.indexOf(chosen) >= 0 ? candidates.indexOf(chosen) : 0,
       chosen,
     };
     console.log(`[auto-model] ${p.name}: model-e entekhab shode = '${chosen}' ` +
-      `(probe shod az ${candidates.length} candidate dar ${p.baseUrl}/models)`);
+      `(az ${candidates.length} candidate, ${p.baseUrl}/models ${ids.length ? 'OK' : 'NIST -> fallback list'})`);
+    if (chosen) saveModelCache(key, { chosen, candidates, index: state.index });
   }
 
   state.at = Date.now();
@@ -232,11 +258,18 @@ async function ensureModelState(p) {
   return state;
 }
 
-// Be har candidate ye call-e kuchik (ba tool) mizanim; faghat modeli
-// ke tool_call-e NATIVE bede ghabul mishe (mesl-e CryptoMind-XT —
-// model-hayi ke tool ro tu prose taglid mikonan rad mishan).
+// Probe-e 2-marhalei baraye har provider:
+//   Tier 1: tool-call probe — faghat modeli ke NATIVE tool_call bede ghabul
+//           (behtarin baraye agent). Ta PROBE_MAX_MODELS candidate.
+//   Tier 2: age hichkodum tool_call nadad, plain-text probe — avalin
+//           modeli ke faghat JAVAB bede ghabul mishe (agent-abi bidun-e tool
+//           az badtar nist... vali agar tool dashtim Tier1 barande-e).
+//   Hich kodum: '' bargardun (chat() khodesh be fallback candidate miravad).
 async function probeModels(p, candidates) {
-  for (const mid of candidates) {
+  const cap = candidates.slice(0, PROBE_MAX_MODELS);
+
+  // ---- Tier 1: native tool-call ----
+  for (const mid of cap) {
     try {
       const provider = { ...p, model: mid };
       const req = p.name === 'anthropic'
@@ -253,14 +286,42 @@ async function probeModels(p, candidates) {
       }
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) continue; // 402/401/... -> candidate-e badi
+      if (!res.ok) { console.log(`[auto-model] probe ${mid}: HTTP ${res.status} — rad`); continue; }
       const parsed = p.name === 'anthropic' ? parseAnthropicResp(data) : parseOpenAIResp(data);
-      if (parsed.toolCalls.length) return mid; // tool_call-e native -> in model kar mikone
-      // javab dad vali tool_call nadad -> model-e zaif baraye agent; rad
-    } catch {
-      // hich ghoone error -> candidate-e badi
+      if (parsed.toolCalls.length) return mid; // tool_call-e native -> behtarin entekhab
+      console.log(`[auto-model] probe ${mid}: javab dad vali tool_call nadasht — Tier 2 barresi mishe`);
+    } catch (e) {
+      console.log(`[auto-model] probe ${mid}: ${String(e.message || e).slice(0, 80)}`);
     }
   }
+
+  // ---- Tier 2: plain-text probe (model-e "javab-dahande") ----
+  for (const mid of cap) {
+    try {
+      const provider = { ...p, model: mid };
+      const req = p.name === 'anthropic'
+        ? buildAnthropicReq(provider, { system: '', messages: [{ role: 'user', content: 'ping' }], tools: [] })
+        : buildOpenAIReq(provider, { system: '', messages: [{ role: 'user', content: 'ping' }], tools: [] });
+
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
+      let res;
+      try {
+        res = await fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: ctrl.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!res.ok) continue;
+      const data = await res.json().catch(() => ({}));
+      const parsed = p.name === 'anthropic' ? parseAnthropicResp(data) : parseOpenAIResp(data);
+      if (parsed.content && String(parsed.content).trim()) {
+        console.log(`[auto-model] probe ${mid}: tool_call nadarad vali javab midahad (Tier 2 — ghabul shod)`);
+        return mid;
+      }
+    } catch { /* candidate-e badi */ }
+  }
+
   return ''; // hichi kar nakard (key/baseURL ghalat, ya account bedun-e etebar)
 }
 
