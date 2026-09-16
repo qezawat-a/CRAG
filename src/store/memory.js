@@ -1,51 +1,83 @@
 // store/memory.js — LongTermMemory (port az CryptoMind-XT/bot/memory.py)
 // ------------------------------------------------------------
-// SQLAlchemy -> JSON-file store (data/trader-store.json). API hamun-e
-// Python-e: settings / signals / trades / cooldowns / ai_context / chat.
-// Data-e process koochak ast (settings + trades + signals), pas write
-// atomic (tmp + rename) kafi va amn-e. Baraye Postgres/MySQL deploy
-// DATABASE_URL dar Python bood; inja STORE_FILE ro be ye volume mount
-// eshare konid.
+// Ravesh-e zakhire: agar DATABASE_URL set bashe -> Postgres/MySQL-e DAEMI
+// (Neon / Railway) — hamun fekr-e SQLAlchemy-e Python. Vagar-na file-e JSON-e
+// mahali (data/trader-store.json) — ke ru deploy-e ephemeral (Railway/Heroku)
+// ba har deploy PAK mishe (README-e Python ham hamin hoshdar ro midad).
+// API hamun-e Python-e va SYNC-e: settings / signals / trades / cooldowns /
+// ai_context / chat. Khandan az RAM-e; neveshtan async + queued (snapshot upsert).
 import fs from 'node:fs';
 import path from 'node:path';
 import { Config } from '../config.js';
+import { createBackend, DEFAULT_STORE_ID } from './persist.js';
 
 const EMPTY = () => ({ chat: [], trades: [], signals: [], settings: {}, cooldowns: {}, aiContext: {}, seq: { trades: 0, signals: 0 } });
 
 function num(v, d = 0) { const n = parseFloat(v); return Number.isFinite(n) ? n : d; }
 
 export class LongTermMemory {
-  constructor(storeFile = null) {
+  constructor(storeFile = null, { backend = null, databaseUrl = undefined, storeId = null } = {}) {
     this.file = path.resolve(storeFile || Config.STORE_FILE);
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    this.data = this._load();
+    this.backend = backend || createBackend({
+      url: databaseUrl === undefined ? Config.DATABASE_URL : databaseUrl,
+      file: this.file,
+      id: storeId || Config.STORE_ID || DEFAULT_STORE_ID,
+    });
+    // file backward-compatible sync load; DB tu init() (async) load mishe
+    this.data = this.backend.kind === 'file' ? this._load() : EMPTY();
     this._saveTimer = null;
+    this._queue = Promise.resolve();
   }
+
+  // init(): baraye DB-e vaghei — table ro misaze va snapshot-e ghabli ro
+  // mikhone. (File backend tu constructor load shode, pas inja faghat mkdir.)
+  async init() {
+    if (this.backend.kind === 'file') { fs.mkdirSync(path.dirname(this.file), { recursive: true }); return this; }
+    await this.backend.init();
+    const remote = await this.backend.load();
+    if (remote && typeof remote === 'object' && !Array.isArray(remote)) this.data = { ...EMPTY(), ...remote };
+    return this;
+  }
+
+  // tozih-e zakhire baraye log (file:... ya postgres:default)
+  get persistence() { return this.backend.kind === 'file' ? `file:${this.file}` : `${this.backend.kind}:${this.backend.id}`; }
 
   _load() {
     try {
-      const raw = fs.readFileSync(this.file, 'utf8');
-      const parsed = JSON.parse(raw);
+      const parsed = this.backend.loadSync ? this.backend.loadSync() : null;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return EMPTY();
       return { ...EMPTY(), ...parsed };
     } catch {
       return EMPTY();
     }
   }
 
+  // snapshot-e kamel -> queue (chandin write-e hamzaman: tartib hefz mishe)
   _saveNow() {
-    const tmp = `${this.file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
-    fs.renameSync(tmp, this.file);
+    if (this.backend.kind === 'file') fs.mkdirSync(path.dirname(this.file), { recursive: true });
+    const snapshot = JSON.parse(JSON.stringify(this.data));
+    this._queue = this._queue
+      .then(() => this.backend.save(snapshot))
+      .catch((e) => { console.error('[memory] save failed:', e.message); });
+    return this._queue;
   }
 
   _save() {
-    // debounce-e koochak ta loop-haye seriDB ro block nakonan
+    // debounce-e koochak ta loop-haye seri DB ro block nakonan
     if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => { this._saveTimer = null; try { this._saveNow(); } catch (e) { console.error('[memory] save failed:', e.message); } }, 25);
+    this._saveTimer = setTimeout(() => { this._saveTimer = null; this._saveNow(); }, 25);
   }
 
-  flush() { if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; } this._saveNow(); }
-  close() { this.flush(); }
+  // flush()/close(): hame write-haye pending ro await mikone (baraye shutdown)
+  async flush() {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; this._saveNow(); }
+    return this._queue;
+  }
+
+  async close() {
+    await this.flush();
+    await this.backend.close();
+  }
 
   // ---------- chat history ----------
   addChatMessage(role, content) {

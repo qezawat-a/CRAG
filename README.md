@@ -17,12 +17,23 @@ npm install
 cp .env.example .env   # XT_API_KEY / TELEGRAM_BOT_TOKEN / AI_API_KEY ro por kon
 npm start              # trader + agent + telegram + health server
 npm run agent          # TUI-e agent (agency mode)
-npm test               # 33 test
+npm test               # 52 test (1 test-e DB-e vaghei be-soorate skip — ba TEST_DATABASE_URL ejra mishe)
 ```
 
 > **Amniat:** `XT_DRY_RUN=1` (default) order/TPSL/close-e VAGHEI nemifreste. Baraye trade-e vaghei `XT_DRY_RUN=0` konid.
 
 > **Auto-model:** `AI_MODEL` ro dar `.env` set konid ta probe/autodetect az `/models` skip beshe (saritar va paydar-tar).
+
+> **Zakhire (persistence):** state-e bot (settings / trades / signals / cooldowns) be-soorate pishfarz tu file-e `data/trader-store.json` mimune — ke ru deploy-e ephemeral (Railway/Heroku) **ba har deploy pak mishe**. Baraye zakhire-ye DAEMI `DATABASE_URL` bedid (Neon Postgres ya Railway MySQL), mesl-e versione Python-e Crypto2:
+
+```bash
+# Neon (pishnahad shode) — pooler URL + sslmode=require
+DATABASE_URL=postgresql://user:pass@ep-xxx-pooler.neon.tech/neondb?sslmode=require
+# ya Railway MySQL (niyaz be `npm install mysql2`)
+DATABASE_URL=mysql://user:pass@host:3306/railway
+```
+
+State be-soorate snapshot-e JSON tu table-e `trader_store` (id = `STORE_ID`) upsert mishe; pool + `pg` automatic misazan. Chand bot ru yek DB? `STORE_ID` ro baraye har bot joda konid.
 
 ## Sakhtar
 

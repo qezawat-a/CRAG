@@ -40,8 +40,17 @@ if (missing.length) {
 
 // ---------- 2) memory store (seed defaults + legacy cleanup) ----------
 const memory = new LongTermMemory();
+try { await memory.init(); }
+catch (e) {
+  log(`[main] FATAL: store init failed (${memory.backend.kind}): ${e.message}`);
+  log('[main] DATABASE_URL ro check kon — ya barash dar biar ta file-e mahali (data/trader-store.json) estefade beshe.');
+  process.exit(1);
+}
 memory.seedDefaults();
-log(`[main] store ready: ${Config.STORE_FILE} (settings: ${Object.keys(memory.getAllSettings()).length})`);
+log(`[main] store ready: ${memory.persistence} (settings: ${Object.keys(memory.getAllSettings()).length})`);
+if (memory.backend.kind === 'file') {
+  log('[main] HOSHDAR: DATABASE_URL nist — state faghat tu file-e mahali mimune; ru deploy-e ephemeral (Railway/Heroku) har deploy PAK mishe. Neon Postgres vasl kon (README).');
+}
 
 // ---------- 3) trader ----------
 const trader = new XTTrader(memory);
@@ -157,10 +166,15 @@ http.createServer((req, res) => {
 
 log(`[main] ${agentName} started. Send /start to your Telegram bot to begin.`);
 
-process.on('SIGINT', () => {
-  log('[main] shutting down...');
-  trader.stopAutoTrade();
-  trader.stopMidManager();
-  memory.close();
+// shutdowne monghe: write-haye pending store ro await mikone (Railway SIGTERM mifreste)
+let shuttingDown = false;
+const shutdown = async (sig) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log(`[main] shutting down (${sig})...`);
+  try { trader.stopAutoTrade(); trader.stopMidManager(); } catch { /* hichi */ }
+  try { await memory.close(); log('[main] store flush shod.'); } catch (e) { log(`[main] store close error: ${e.message}`); }
   process.exit(0);
-});
+};
+process.on('SIGINT', () => { shutdown('SIGINT'); });
+process.on('SIGTERM', () => { shutdown('SIGTERM'); });

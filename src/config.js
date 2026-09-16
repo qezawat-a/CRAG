@@ -23,9 +23,11 @@ export const Config = {
   TELEGRAM_BOT_TOKEN: env('TELEGRAM_BOT_TOKEN'),
   TELEGRAM_USER_ID: env('TELEGRAM_USER_ID'),
 
-  // data/store (JSON-file memory — ja-ye SQLAlchemy)
+  // data/store (memory: DATABASE_URL -> Postgres/MySQL-e DAEMI, vagar-na file)
   DATA_DIR: env('DATA_DIR', 'data'),
-  STORE_FILE: env('STORE_FILE', 'data/trader-store.json'),
+  STORE_FILE: env('STORE_FILE', `${env('DATA_DIR', 'data')}/trader-store.json`),
+  DATABASE_URL: env('DATABASE_URL'), // mesal (Neon): postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
+  STORE_ID: env('STORE_ID', 'default'), // chand bot ru yek DB-e moshtarak? in ro joda kon
 
   // --- trading defaults (tuned with user) ---
   DEFAULT_SYMBOL: env('XT_DEFAULT_SYMBOL', env('DEFAULT_SYMBOL', 'btc_usdt')),

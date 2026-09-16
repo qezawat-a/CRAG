@@ -4,7 +4,9 @@
   "private": true,
   "description": "Crypto2 + xt-agent merged (JS): XT futures AI trader bot + autonomous AI agent (soul/skills/prompt)",
   "type": "module",
-  "bin": { "jrock": "./bin/jrock.js" },
+  "bin": {
+    "jrock": "./bin/jrock.js"
+  },
   "scripts": {
     "start": "node src/main.js",
     "agent": "node src/ui/tui.js",
@@ -16,6 +18,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "pg": "^8.23.0",
     "ws": "^8.18.0"
   }
 }
