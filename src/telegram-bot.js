@@ -15,9 +15,9 @@ const TRADER_COMMANDS = [
   { command: 'midmanage', description: 'Breakeven + trailing ejra kon' },
   { command: 'sync', description: 'Sync position ha ba local store' },
   { command: 'trades', description: 'Trade summary (PnL/winrate)' },
-  { command: 'diag', description: 'Diagnose-e mid-management' },
   { command: 'reset_cooldown', description: 'Cooldown ha ro pak kon' },
   { command: 'set', description: 'Setting: /set min_confidence 75' },
+  { command: 'reseed', description: '.env ro rooye store ejra kon (setting haye .env haminja dide mishan)' },
 ];
 
 export async function startTelegramBot({ trader, agent, agentName = 'crypto-agent', log = console.log }) {
@@ -63,6 +63,9 @@ export async function startTelegramBot({ trader, agent, agentName = 'crypto-agen
         say: (m) => (agent ? agent.say(m) : Promise.resolve({ reply: 'agent nist' })),
         getModel: () => process.env.AI_MODEL || '(auto)',
         agentName,
+        memory: trader ? trader.memory : null,
+        trader,
+        traderCommands: TRADER_COMMANDS,
       });
       if (base.handled) { await api.sendMessage(chatId, base.reply); return; }
 
@@ -102,7 +105,14 @@ export async function startTelegramBot({ trader, agent, agentName = 'crypto-agen
       case 'midmanage': await api.sendMessage(chatId, trader ? await trader.runMidManagement() : 'trader nist'); return true;
       case 'sync': await api.sendMessage(chatId, trader ? await trader.syncPositions() : 'trader nist'); return true;
       case 'trades': await api.sendMessage(chatId, trader ? trader.memory.getTradeSummaryForAi() : 'trader nist'); return true;
-      case 'diag': await api.sendMessage(chatId, trader ? await trader.diagnose() : 'trader nist'); return true;
+      case 'reseed': {
+        if (!trader) { await api.sendMessage(chatId, 'trader nist'); return true; }
+        const changed = trader.memory.applyEnvDefaults();
+        await api.sendMessage(chatId, changed.length
+          ? `env rooye store ejra shod (${changed.length} key avaz shod):\n${changed.slice(0, 15).map((c) => `${c.key}: ${c.from} -> ${c.to}`).join('\n')}\n\n/settings baraye check.`
+          : 'hich farghi nabud — store hamun .env-e.');
+        return true;
+      }
       case 'reset_cooldown': {
         if (!trader) { await api.sendMessage(chatId, 'trader nist'); return true; }
         const n = trader.memory.clearCooldown();

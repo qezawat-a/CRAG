@@ -11,6 +11,7 @@ import {
   DEFAULT_STORE_ID,
 } from '../src/store/persist.js';
 import { LongTermMemory } from '../src/store/memory.js';
+import { handleTelegramCommand } from '../src/telegram-commands.js';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 const tmpFile = (name = 'store.json') => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'jrock-store-')), name);
@@ -163,5 +164,53 @@ describe('LongTermMemory zakhire', () => {
     await c.connect();
     await c.query('DELETE FROM trader_store WHERE id = $1', [id]);
     await c.end();
+  });
+});
+
+describe('/settings + env (.env chera ejra nemishod)', () => {
+  it('applyEnvDefaults: env ro rooye store minevise va fargh ha ro migoo', async () => {
+    const file = tmpFile();
+    const m = new LongTermMemory(file, { databaseUrl: null });
+    await m.init();
+    m.seedDefaults();
+    m.setSetting('leverage', '999'); // store fargh-e .env dare
+    const changed = m.applyEnvDefaults();
+    assert.ok(changed.find((c) => c.key === 'leverage' && c.from === '999'), JSON.stringify(changed));
+    assert.notEqual(m.getSetting('leverage'), '999'); // alan = meghdar-e env
+    await m.close();
+  });
+
+  it('/settings: meghdar-e MOASER + "ejra NEMISHE" baraye fargh-e .env', async () => {
+    const file = tmpFile();
+    const m = new LongTermMemory(file, { databaseUrl: null });
+    await m.init();
+    m.seedDefaults();
+    m.setSetting('leverage', '999');
+    const r = await handleTelegramCommand('/settings', { memory: m });
+    assert.equal(r.handled, true);
+    assert.ok(r.reply.includes('leverage=999 [store]'), r.reply);
+    assert.ok(r.reply.includes('ejra NEMISHE'), r.reply);
+    assert.ok(r.reply.includes('/reseed'), r.reply);
+    assert.ok(r.reply.includes(`store=file:${file}`), r.reply);
+    await m.close();
+  });
+
+  it('/status symbol ro az store migire (na faghat env)', async () => {
+    const o1 = process.env.XT_RETRY_BASE_MS; const o2 = process.env.XT_MIN_REQUEST_MS;
+    process.env.XT_RETRY_BASE_MS = '0'; process.env.XT_MIN_REQUEST_MS = '0';
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+    const file = tmpFile();
+    const m = new LongTermMemory(file, { databaseUrl: null });
+    await m.init(); m.seedDefaults(); m.setSetting('symbol', 'syn_usdt');
+    try {
+      const r = await handleTelegramCommand('/status', { memory: m });
+      assert.ok(r.reply.includes('=== STATUS [syn_usdt] ==='), r.reply);
+    } finally {
+      globalThis.fetch = origFetch;
+      if (o1 === undefined) delete process.env.XT_RETRY_BASE_MS; else process.env.XT_RETRY_BASE_MS = o1;
+      if (o2 === undefined) delete process.env.XT_MIN_REQUEST_MS; else process.env.XT_MIN_REQUEST_MS = o2;
+      await m.close();
+    }
   });
 });

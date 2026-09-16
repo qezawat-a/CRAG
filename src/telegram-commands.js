@@ -7,10 +7,15 @@ import { XTClient } from './xt/client.js';
 import { RiskManager } from './xt/risk.js';
 import { PositionManager } from './xt/positions.js';
 import { scanMultiTimeframe, getCurrentPrice, getCurrentPriceDetailed } from './xt/scanner.js';
+import { Config } from './config.js';
 function xtCfg() {
   return { host: process.env.XT_FUTURES_HOST || 'https://fapi.xt.com', accessKey: process.env.XT_API_KEY || '', secretKey: process.env.XT_API_SECRET || '' };
 }
-function defSym() { return process.env.XT_DEFAULT_SYMBOL || 'btc_usdt'; }
+// symbol-e mo'aser: store (ke trader estefade mikone) -> env -> 'btc_usdt'
+function defSym(ctx = null) {
+  if (ctx && ctx.memory) { const s = ctx.memory.getSetting('symbol', null); if (s) return s; }
+  return process.env.XT_DEFAULT_SYMBOL || process.env.DEFAULT_SYMBOL || 'btc_usdt';
+}
 function tfs() { return String(process.env.XT_TIMEFRAMES || '1m,3m,5m,15m').split(',').map((x) => x.trim()).filter(Boolean); }
 export const TG_COMMANDS = [
   { command: 'start', description: 'Help + list-e command ha' },
@@ -28,7 +33,8 @@ export function startText(agentName) {
 }
 // handleTelegramCommand(text, ctx) -> { handled: bool, reply: string }
 // ctx: { say, getModel, agentName }
-export async function handleTelegramCommand(text, { say, getModel, agentName = 'agent' } = {}) {
+export async function handleTelegramCommand(text, { say, getModel, agentName = 'agent', memory = null, trader = null, traderCommands = null } = {}) {
+  const ctx = { say, getModel, agentName, memory, trader, traderCommands };
   const t = String(text || '').trim();
   if (!t.startsWith('/')) return { handled: false };
   const parts = t.slice(1).split(/\s+/);
@@ -39,10 +45,14 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
   const pm = new PositionManager(xt, risk);
   try {
     switch (cmd) {
-      case 'start': case 'help':
-        return { handled: true, reply: startText(agentName) };
+      case 'start': case 'help': {
+        const extra = Array.isArray(traderCommands) && traderCommands.length
+          ? '\n\nTrader commands:\n' + traderCommands.map((c) => `/${c.command} - ${c.description}`).join('\n')
+          : '';
+        return { handled: true, reply: startText(agentName) + extra };
+      }
       case 'status': {
-        const s = args[0] || defSym();
+        const s = args[0] || defSym(ctx);
         const [bal, pos, px] = await Promise.all([
           xt.getBalances().catch((e) => ({ error: e.message })),
           xt.getPositions().catch((e) => ({ error: e.message })),
@@ -86,7 +96,32 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         return { handled: true, reply: out };
       }
       case 'settings': {
-        return { handled: true, reply: `symbol=${defSym()}\ntimeframes=${tfs().join(',')}\nhost=${xtCfg().host}\ndryRun=${process.env.XT_DRY_RUN || '0'}\nkey=${process.env.XT_API_KEY ? 'set (' + String(process.env.XT_API_KEY).slice(0, 4) + '...)' : '(nist)'}` };
+        // /settings = meghdar-e MOASER (hamun ke trader estefade mikone) + fargh ba .env.
+        // Store avvalavi-e: seedDefaults faghat ja-haye khali ro por mikone, pas
+        // .env-e avaz-shode khod-be-khod ejra NEMISHE (bekhun: /reseed).
+        const envDefs = Config.defaultSettings();
+        const diff = memory && memory.envDiff ? memory.envDiff() : null;
+        const lines = ['=== SETTINGS (effective) ==='];
+        let mism = 0;
+        for (const [k, envVal] of Object.entries(envDefs)) {
+          const d = diff ? diff[k] : { stored: null, env: String(envVal), diff: false };
+          const eff = d.stored === null ? String(envVal) : d.stored;
+          const src = d.stored === null ? 'env' : 'store';
+          let line = `${k}=${eff} [${src}]`;
+          if (d.diff) { mism++; line += `  (env: ${envVal} — ejra NEMISHE)`; }
+          lines.push(line);
+        }
+        // env-haye aliasing ke hamzaman set mishan (avvali avvalavi-e)
+        const ALIASES = { symbol: ['XT_DEFAULT_SYMBOL', 'DEFAULT_SYMBOL'], timeframes: ['XT_TIMEFRAMES', 'DEFAULT_TIMEFRAMES'] };
+        for (const [k, names] of Object.entries(ALIASES)) {
+          const set = names.filter((n) => process.env[n] !== undefined && process.env[n] !== '');
+          if (set.length > 1) lines.push(`! ${k}: chand env set-e (${set.map((n) => `${n}=${process.env[n]}`).join(' , ')}) — avvali avvalavi-e`);
+        }
+        lines.push(`host=${xtCfg().host} dryRun=${process.env.XT_DRY_RUN || '0'} key=${process.env.XT_API_KEY ? 'set (' + String(process.env.XT_API_KEY).slice(0, 4) + '...)' : '(nist)'}`);
+        if (memory) lines.push(`store=${memory.persistence}`);
+        if (mism) lines.push(`\n${mism} key ba .env fargh dare vali store avvalavi-e → /reseed bezan ta .env ejra beshe.`);
+        lines.push('Tanzim: /set key value (mesal /set leverage 10)');
+        return { handled: true, reply: lines.join('\n') };
       }
       case 'check_ai': {
         try {
@@ -109,12 +144,21 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         lines.push(`XT_FUTURES_HOST: ${xtCfg().host}`);
         lines.push(`AI key: ${process.env.AI_API_KEY ? 'set' : 'NIST!'}`);
         lines.push(`AI model: ${getModel ? getModel() : '(auto)'}`);
+        if (memory) lines.push(`store: ${memory.persistence} (settings: ${Object.keys(memory.getAllSettings()).length})`);
         try { await xt.getAccountInfo(); lines.push('XT connect: OK'); }
         catch (e) { lines.push(`XT connect: FAIL (${e.message.slice(0, 120)})`); }
+        if (trader && typeof trader.diagnose === 'function') {
+          try { lines.push('', await trader.diagnose()); } catch (e) { lines.push(`trader diagnose failed: ${e.message}`); }
+        }
         return { handled: true, reply: lines.join('\n') };
       }
+      // NOTE: command-haye trader (/autotrade_on /open /set /sync /protect /trades
+      // /reset_cooldown /close_all /reseed ...) inja handle NEMISHAN — bayad
+      // handled:false bargardoonim ta telegram-bot.js be handleTraderCommand
+      // berese. (ghabl-an hamin ja 'Unknown command' midad va 10 command-e
+      // trader hich vaght ejra nemishod.)
       default:
-        return { handled: true, reply: `Unknown command /${cmd}. /start baraye list.` };
+        return { handled: false };
     }
   } catch (e) { return { handled: true, reply: `Error: ${e.message}` }; }
 }

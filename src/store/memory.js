@@ -227,6 +227,33 @@ export class LongTermMemory {
     return true;
   }
 
+  // fargh-e store ba env (baraye /settings) — key -> {stored, env, diff}
+  envDiff() {
+    const out = {};
+    for (const [k, v] of Object.entries(Config.defaultSettings())) {
+      const cur = this.data.settings[k];
+      out[k] = { stored: cur === undefined ? null : String(cur), env: String(v), diff: cur === undefined || String(cur) !== String(v) };
+    }
+    return out;
+  }
+
+  // env (Config) ro ROOYE store benevis — /reseed
+  // seedDefaults faghat ja-haye KHALI ro por mikone, pas vaghti .env ro avaz
+  // mikoni store-e ghadimi avvalavi mimune va .env ejra NEMISHE; in tabe un
+  // fargho ejra mikone va list-e key-haye avaz-shode ro bar migardone.
+  applyEnvDefaults() {
+    const changed = [];
+    for (const [k, v] of Object.entries(Config.defaultSettings())) {
+      const cur = this.data.settings[k];
+      if (cur === undefined || String(cur) !== String(v)) {
+        changed.push({ key: k, from: cur === undefined ? '(nist)' : String(cur), to: String(v) });
+      }
+      this.data.settings[k] = String(v);
+    }
+    this._save();
+    return changed;
+  }
+
   getSetting(key, defaultValue = null) {
     const v = this.data.settings[key];
     return v === undefined ? defaultValue : v;
