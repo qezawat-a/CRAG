@@ -70,6 +70,18 @@ describe('XT network errors', () => {
     assert.equal(calls, 1);
   });
 
+  it('order POST uses Connection: close (no keep-alive reuse)', async () => {
+    let seenHeaders = null;
+    const client = fast();
+    await withFetch(async (url, opts) => {
+      seenHeaders = opts && opts.headers;
+      return okJson({});
+    }, async () => {
+      await client.createOrder({ symbol: 'btc_usdt', positionSide: 'LONG', orderSide: 'BUY', orderType: 'MARKET', origQty: 1 });
+    });
+    assert.equal(seenHeaders && seenHeaders.Connection, 'close');
+  });
+
   it('getBalances: error-e endpoint-e avval ro mide (na list-e khali)', async () => {
     const c = fast();
     await withFetch(async () => { netFail('ENOTFOUND'); }, async () => {

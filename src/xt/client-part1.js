@@ -55,6 +55,11 @@ export class XTBase {
           if (!this._ak || !this._sk) throw new XTError(`${path} -> XT_API_KEY/XT_API_SECRET khali (.env).`);
           const s = signedHeadersAndPayload({ method, path, params: clean, apiKey: this._ak, secret: this._sk });
           headers = s.headers;
+          // Order endpoint ha (no-retry): keep-alive reuse-e undici gahi
+          // socket-e baste-shode-ye server/proxy ro reuse mikone (UND_ERR_SOCKET).
+          // Bot-e Python-e ghadimi har request ye connection-e jadid mizad —
+          // baraye parity, in POST ha ba Connection: close ferestade mishan.
+          if (noRetry) headers.Connection = 'close';
           if (method === 'GET') { if (s.query && Object.keys(s.query).length) url.search = new URLSearchParams(s.query).toString(); }
           else body = s.body;
         } else {
