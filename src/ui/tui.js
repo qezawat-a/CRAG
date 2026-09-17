@@ -23,6 +23,7 @@
 //   exit / quit             -> save va khoruj
 
 import readline from 'node:readline/promises';
+import { terminalText } from './terminal-text.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createAgent } from '../agent/loop.js';
@@ -779,7 +780,7 @@ while (true) {
   if (lower === 'exit' || lower === 'quit') { await flush(); try { await traderMemory.close(); } catch {} if (services) services.stopAll(); shutdownMcp(); break; }
 
   if (input.startsWith('/')) {
-    try { await handleCmd(input); } catch (e) { console.error(`\n[Error] ${e.message}`); }
+    try { await handleCmd(input); } catch (e) { console.error(terminalText(`\n[Error] ${e.message}`)); }
     continue;
   }
 
@@ -791,9 +792,9 @@ while (true) {
   try {
     const res = await agent.say(input);
     await flush(); // payam-ha hamishe save mishan
-    console.log(`\n${AGENT_NAME}> ${res.reply}`);
+    console.log(terminalText(`\n${AGENT_NAME}> ${res.reply}`));
   } catch (e) {
-    console.error(`\n[Error] ${e.message}`);
+    console.error(terminalText(`\n[Error] ${e.message}`));
   }
 }
 

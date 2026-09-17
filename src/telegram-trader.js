@@ -33,7 +33,7 @@ export function traderCommandNames() {
 }
 
 function needTrader(trader) {
-  if (!trader) return 'trader nist (bot dar hale init-e ya XT key مشکل داره).';
+  if (!trader) return 'trader nist (bot dar hale init-e ya XT key moshkel dare).';
   return null;
 }
 

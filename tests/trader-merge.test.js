@@ -133,6 +133,57 @@ describe('XTTrader (merged logic)', () => {
     delete process.env.XT_DRY_RUN;
   });
 
+  for (const mode of ['margin', 'risk']) {
+    test(`auto scan: ${mode} sizing object reaches mocked order creation`, async () => {
+      const { trader, memory } = makeTrader();
+      const oldDryRun = process.env.XT_DRY_RUN;
+      process.env.XT_DRY_RUN = '0';
+      memory.setSetting('position_mode', mode);
+      let sizingCalls = 0;
+      let order = null;
+      const calculate = trader.risk.calculatePositionSize.bind(trader.risk);
+      trader.risk.calculatePositionSize = async (...args) => {
+        sizingCalls++;
+        return calculate(...args);
+      };
+      trader.xt.getBalances = async () => [{ coin: 'USDT', availableBalance: '100', walletBalance: '100' }];
+      trader.xt.setLeverage = async () => ({});
+      trader.xt.setPositionType = async () => ({});
+      trader.xt.createOrder = async (args) => { order = args; return { orderId: 'mock-only' }; };
+      trader._finalizeOpen = async (args) => {
+        assert.equal(args.sizeMode, mode === 'margin' ? 'margin_based' : 'risk_based');
+        assert.equal(args.orderId, 'mock-only');
+        return 'mock order accepted';
+      };
+      try {
+        await trader._scanCycle();
+        assert.ok(order);
+        assert.ok(Number.isInteger(order.origQty) && order.origQty > 0);
+        assert.equal(order.positionSide, 'LONG');
+        assert.equal(sizingCalls, mode === 'margin' ? 2 : 1);
+      } finally {
+        if (oldDryRun === undefined) delete process.env.XT_DRY_RUN;
+        else process.env.XT_DRY_RUN = oldDryRun;
+        await memory.close();
+      }
+    });
+  }
+
+  test('zero sizing returns reason without sending an order', async () => {
+    const { trader, memory } = makeTrader();
+    const oldDryRun = process.env.XT_DRY_RUN;
+    process.env.XT_DRY_RUN = '0';
+    trader.xt.getBalances = async () => [{ coin: 'USDT', availableBalance: '0' }];
+    trader.xt.createOrder = async () => { assert.fail('zero balance must not send orders'); };
+    try {
+      assert.match(await trader.executeTrade('LONG'), /Cannot size position: computed size 0/);
+    } finally {
+      if (oldDryRun === undefined) delete process.env.XT_DRY_RUN;
+      else process.env.XT_DRY_RUN = oldDryRun;
+      await memory.close();
+    }
+  });
+
   test('closePosition: vaghei close -> cooldown baraye HAR DO side', async () => {
     const { trader, memory } = makeTrader();
     // position-e zende rooye exchange mock kon

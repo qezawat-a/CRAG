@@ -94,7 +94,12 @@ export async function handleTelegramCommand(text, { say, getModel, agentName = '
         if (r.strategiesUsed && r.strategiesUsed.length) out += `Strategies: ${r.strategiesUsed.join(',')}\n`;
         for (const [tf, x] of Object.entries(r.timeframeResults || {})) {
           if (x.error) { out += `  ${tf}: no data\n`; continue; }
-          out += `  ${tf}: ${x.direction} (${x.confidence}%)\n`;
+          out += `  ${tf}: ${x.direction} (strategy score: ${x.confidence}%)\n`;
+          out += `    LONG=${x.longCount}, SHORT=${x.shortCount}, minAgree=${ma}, minConfidence=${mc}, tfMinConfidence=${tfmc}\n`;
+          if (x.rejectionReason) out += `    Dalil: ${x.rejectionReason}\n`;
+          if (x.vetoReason) out += `    ${x.vetoReason}\n`;
+          const signals = (x.allSignals || []).filter((signal) => signal.side !== 'NEUTRAL');
+          if (signals.length) out += `    ${signals.map((signal) => `${signal.strategy}=${signal.side}(${signal.conf}%)`).join(', ')}\n`;
         }
         return { handled: true, reply: out };
       }

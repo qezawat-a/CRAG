@@ -50,7 +50,13 @@ export function scanTimeframe(candles, { minConfidence = 80, minAgree = 2, tfMin
   const strength = direction !== 'NEUTRAL' && tot > 0 ? Math.abs(ls - ss) / tot : 0;
   const sigs = [...longs, ...shorts];
   const avg = sigs.length ? Math.floor(sigs.reduce((a, s) => a + s.conf, 0) / sigs.length) : 0;
-  return { direction, confidence: avg, signalStrength: strength, strategiesUsed: used, allSignals: all, longCount: longs.length, shortCount: shorts.length, rsi: rsiVal, vetoReason: veto };
+  let rejectionReason = null;
+  if (direction === 'NEUTRAL') {
+    if (!sigs.length) rejectionReason = 'Hich strategy bad az filter-ha baghi namand';
+    else if (ls === ss) rejectionReason = 'Emtiaz-e LONG va SHORT barabar ast';
+    else rejectionReason = `Taeed-e hamjahat kafi nist: LONG=${longs.length}, SHORT=${shorts.length}, minimum=${minAgree}`;
+  }
+  return { direction, confidence: avg, signalStrength: strength, strategiesUsed: used, allSignals: all, longCount: longs.length, shortCount: shorts.length, rsi: rsiVal, vetoReason: veto, rejectionReason };
 }
 export async function scanMultiTimeframe(xt, symbol, intervals, { minConfidence = 80, tfMinConfidence = 70, minAgree = 2, limit = 200 } = {}) {
   const tfResults = {};

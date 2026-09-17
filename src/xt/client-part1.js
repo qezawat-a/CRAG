@@ -83,7 +83,12 @@ export class XTBase {
       } catch (e) {
         lastErr = e;
         if (e instanceof XTError) throw e;
-        if (noRetry) throw new XTError(`${path} -> ${describeFetchError(e, this.timeoutMs)}`);
+        if (noRetry) {
+          const error = new XTError(`${path} -> ${describeFetchError(e, this.timeoutMs)}`);
+          error.cause = e;
+          error.orderOutcomeUnknown = true;
+          throw error;
+        }
         if (attempt < maxRetries - 1) { await sleep(Math.min(this.retryBaseMs * 2 ** attempt, 4000)); continue; }
         throw new XTError(`${path} -> ${describeFetchError(e, this.timeoutMs)}`);
       }

@@ -23,7 +23,8 @@ describe('AI error diagnostics', () => {
           assert.match(error.message, /AI request failed after trying all configured providers\/models/);
           assert.match(error.message, /openai\/test-model/);
           assert.match(error.message, /ENOTFOUND/);
-          assert.match(error.message, /اتصال شبکه/);
+          assert.match(error.message, /Etesal-e shabake/);
+          assert.doesNotMatch(error.message, /[\u0600-\u06ff]/u);
           assert.doesNotMatch(error.message, /hich model-i ba in key kar nakard/);
           return true;
         },

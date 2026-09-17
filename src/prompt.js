@@ -95,5 +95,7 @@ export function buildSystemPrompt({
 
   if (extra) parts.push(`\n## Extra Context\n${extra}`);
 
+  parts.push('\n## Output language\nTerminal output must be left-to-right. Write Persian responses in Finglish (Persian using Latin letters), never Persian/Arabic script. Apply this to reports, summaries and explanations, even when the user or previous history uses Persian script. Preserve code, numbers, symbols and setting keys exactly.');
+
   return parts.join('\n\n');
 }

@@ -53,6 +53,23 @@ describe('XT network errors', () => {
     assert.equal(calls, 1); // order endpoint retry NEMISHE
   });
 
+  it('socket loss during order creation is unknown and never retried', async () => {
+    let calls = 0;
+    const client = fast();
+    await withFetch(async () => { calls++; netFail('UND_ERR_SOCKET'); }, async () => {
+      await assert.rejects(
+        () => client.createOrder({ symbol: 'btc_usdt', positionSide: 'LONG', orderSide: 'BUY', orderType: 'MARKET', origQty: 1 }),
+        (error) => {
+          assert.equal(error.orderOutcomeUnknown, true);
+          assert.equal(error.cause.cause.code, 'UND_ERR_SOCKET');
+          assert.match(error.message, /UND_ERR_SOCKET/);
+          return true;
+        },
+      );
+    });
+    assert.equal(calls, 1);
+  });
+
   it('getBalances: error-e endpoint-e avval ro mide (na list-e khali)', async () => {
     const c = fast();
     await withFetch(async () => { netFail('ENOTFOUND'); }, async () => {

@@ -25,6 +25,21 @@ describe('indicators', () => {
     assert.ok(['LONG', 'SHORT', 'NEUTRAL'].includes(r.direction));
     assert.ok(Array.isArray(r.allSignals) && r.allSignals.length === 5);
   });
+  it('NEUTRAL explains insufficient agreement despite a high score', () => {
+    const candles = trend(120, 100, 110).map((close) => ({ close }));
+    const r = scanTimeframe(candles, { minAgree: 2 });
+    assert.equal(r.direction, 'NEUTRAL');
+    assert.ok(r.confidence >= 80);
+    assert.match(r.rejectionReason, /Taeed-e hamjahat kafi nist/);
+    assert.match(r.rejectionReason, /minimum=2/);
+    assert.ok(r.vetoReason);
+  });
+  it('empty signals explain that no strategy survived', () => {
+    const r = scanTimeframe([]);
+    assert.equal(r.direction, 'NEUTRAL');
+    assert.equal(r.confidence, 0);
+    assert.match(r.rejectionReason, /Hich strategy/);
+  });
   it('normalizeKlines: newest-first -> oldest-first', () => {
     const rows = [{ t: 3000, o: 1, h: 1, l: 1, c: 1, a: 1, v: 1 }, { t: 1000, o: 1, h: 1, l: 1, c: 1, a: 1, v: 1 }];
     const n = normalizeKlines(rows);

@@ -25,9 +25,10 @@ import { listSkills } from './agent/skills.js';
 import { xtFuturesTools } from './xt/futures-tools.js';
 import { loadMcpTools } from './agent/mcp.js';
 import { startTelegramBot } from './telegram-bot.js';
+import { terminalText } from './ui/terminal-text.js';
 
 const agentName = getSettings().identity.agentName || 'crypto-agent';
-const log = (...a) => console.log(new Date().toISOString(), ...a);
+const log = (...a) => console.log(new Date().toISOString(), ...a.map(terminalText));
 
 // ---------- 1) config validation ----------
 const missing = Config.validate();
@@ -147,7 +148,7 @@ if (['1', 'true', 'yes', 'on'].includes(String(process.env.AGENT_AUTONOMOUS || '
     try {
       const out = await agent.say(
         `Autonomous tick: baraye symbol-e ${memory.getSetting('symbol', Config.DEFAULT_SYMBOL)} scan kon (trader_scan), ` +
-        `position ha ro check kon (trader_status) va age khatari bud report bedeh. Kutah javab bedeh.`,
+        `position ha ro check kon (trader_status) va age khatari bud report bedeh. Kutah va faghat Finglish ba horuf-e Latin javab bedeh; az khat-e Farsi estefade nakon.`,
       );
       const reply = out && out.reply !== undefined ? out.reply : String(out);
       log(`[agent-loop] ${String(reply).slice(0, 200).replace(/\n/g, ' | ')}`);

@@ -53,15 +53,15 @@ function describeProviderError(error, provider, model) {
   const cause = error?.cause;
   const causeCode = cause?.code ? ` [${cause.code}]` : '';
   const lower = message.toLowerCase();
-  let hint = 'provider, model, base URL و API key را بررسی کن.';
+  let hint = 'provider, model, base URL va API key ro check kon.';
   if (lower.includes('fetch failed') || lower.includes('timeout') || lower.includes('timed out') || causeCode) {
-    hint = 'اتصال شبکه، DNS، فایروال و base URL را بررسی کن؛ این پیام به‌تنهایی ثابت نمی‌کند API key اشتباه است.';
+    hint = 'Etesal-e shabake, DNS, firewall va base URL ro check kon; in payam be-tanhayi sabet nemikone API key eshtebah-e.';
   } else if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('invalid api key')) {
-    hint = 'API key یا دسترسی این provider را بررسی کن.';
+    hint = 'API key ya dastresi-e in provider ro check kon.';
   } else if (lower.includes('429') || lower.includes('rate limit')) {
-    hint = 'rate limit یا سهمیه provider پر شده است؛ کمی بعد دوباره امتحان کن.';
+    hint = 'Rate limit ya sahmiye-ye provider por shode; kami bad dobare emtehan kon.';
   } else if (lower.includes('404') || lower.includes('model') && (lower.includes('not found') || lower.includes('invalid'))) {
-    hint = 'نام model و base URL با مستندات provider مطابقت ندارد.';
+    hint = 'Nam-e model va base URL ba mostanadat-e provider motabegh nist.';
   }
   return `${provider}/${model}: ${message}${causeCode} — ${hint}`;
 }
@@ -393,7 +393,7 @@ export async function chat({ system = '', messages = [], tools = [], thinkingLev
             errors.push(`${p.name}: model '${prev}' baraye in account nist (HTTP ${res.status}) — raftam rooye '${st.chosen}'`);
             continue;
           }
-          errors.push(`${p.name}/${p.model}: HTTP ${res.status} — ${bodyText.slice(0, 300)} — provider، model، base URL و API key را بررسی کن.`);
+          errors.push(`${p.name}/${p.model}: HTTP ${res.status} — ${bodyText.slice(0, 300)} — provider, model, base URL va API key ro check kon.`);
           break;
         }
         const parsed = parseResp(p, data);

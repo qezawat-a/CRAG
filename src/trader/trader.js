@@ -289,14 +289,14 @@ export class XTTrader {
     // provisional leverage -> provisional TP/SL (for risk-based sizing) -> size
     const provisionalLeverage = await this.risk.validateLeverage(symbol, leverageSetting);
     const [, provisionalSlPrice] = await this.positionMgr.calculateDynamicTpsl(symbol, direction, price, strength, confidence, provisionalLeverage);
-    let [qty, sizeMode, sizeReason] = await this.risk.calculatePositionSize(symbol, price, provisionalLeverage, { stopLossPrice: provisionalSlPrice, orderType });
+    let { qty, mode: sizeMode, reason: sizeReason } = await this.risk.calculatePositionSize(symbol, price, provisionalLeverage, { stopLossPrice: provisionalSlPrice, orderType });
     if (qty <= 0) return `Cannot size position: ${sizeReason}`;
 
     let notional = await this.risk.contractsToNotional(symbol, qty, price);
     const leverage = await this.risk.validateLeverage(symbol, leverageSetting, notional);
     // margin mode: size depends on leverage -> recalc with correct leverage
     if (this.memory.getSetting('position_mode', 'margin') === 'margin') {
-      [qty, sizeMode, sizeReason] = await this.risk.calculatePositionSize(symbol, price, leverage, { stopLossPrice: provisionalSlPrice, orderType });
+      ({ qty, mode: sizeMode, reason: sizeReason } = await this.risk.calculatePositionSize(symbol, price, leverage, { stopLossPrice: provisionalSlPrice, orderType }));
       if (qty <= 0) return `Cannot size position: ${sizeReason}`;
     }
     notional = await this.risk.contractsToNotional(symbol, qty, price);
@@ -326,6 +326,11 @@ export class XTTrader {
         orderType, origQty: qty, price: limitPrice, timeInForce,
       });
     } catch (e) {
+      if (e.orderOutcomeUnknown) {
+        const message = `Natije-ye order NAMALUM ast: ${e.message}. Retry nashod; momkene order dar XT sabt shode bashe. Ghabl az talash-e dobare, positions va orders-e XT ro check kon.`;
+        this._notify(message);
+        return message;
+      }
       return `Order rejected by XT: ${e.message}`;
     }
     this.risk.invalidateBalanceCache();
