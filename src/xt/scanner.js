@@ -35,13 +35,46 @@ export function scanTimeframe(candles, { minConfidence = 80, minAgree = 2, tfMin
     { strategy: 'BB', ...bollingerSignal(closes) },
     { strategy: 'MOM', ...momentumSignal(closes) },
   ];
+  // RSI: extreme (>=70 / <=30) alone doesn't tell us "reversal now" — ye trend-e
+  // ghavi mitune RSI ro deraz-mod-dat extreme negah dare (mesal: RSI 90+ tu ye
+  // pump-e vaghei). Do chiz check mikonim ghabl az veto/signal-e RSI:
+  //  1) rsiTurningDown/Up: RSI nesbat be bar-e ghabl dare az extreme bar migarde
+  //     ya na (na sadeghan >=70/<=30 e, balke DARE PAEEN MIAD az).
+  //  2) strongUptrend/Downtrend: 2-ta az 3-ta strategy-e trend-following
+  //     (EMA/MACD/MOM) hamjahat-an va hich kodum mokhalef nist.
+  // Vaghti trend ghavi-ye hamun samt-e extreme-e va RSI HANUZ dare turn nemikone
+  // (mesal RSI=92 va dare bala mire), RSI ro nadide migirim — bezar trend edame
+  // peida kone, zoodtar-gereftan-e ghalat ro jelo migire. Be mahzi ke RSI dare az
+  // peak-esh bar migarde (rsiTurningDown/Up = true), hatta agar hanuz literally
+  // 70/30 ro rad nakarde, tabdil be signal-e vaghei mishe + veto ejra mishe —
+  // chon hamun lahze-i-e ke momentum vaghean dare barmigarde.
+  const rsiEntry = all.find((s) => s.strategy === 'RSI');
+  const rsiVal = rsiEntry && rsiEntry.detail ? rsiEntry.detail.rsi : null;
+  const prevRsi = closes.length > 1 ? (rsiSignal(closes.slice(0, -1)).detail?.rsi ?? null) : null;
+  const rsiTurningDown = rsiVal != null && prevRsi != null && rsiVal < prevRsi;
+  const rsiTurningUp = rsiVal != null && prevRsi != null && rsiVal > prevRsi;
+  // MOM (momentum-e piyoste-ye N-bar) behtarin nesbat-e "trend hanuz zende-s" ast —
+  // EMA/MACD faghat sar-e bar-e crossover signal midan (rowidad-e lahzei, na
+  // vaziyat-e edame-dar), pas nemishe montazer-e hamzaman-budan-e 2-ta-shun mand.
+  // strongUptrend/Downtrend = MOM ba etminan-e bala hamun samt-o mige, va
+  // EMA/MACD (agar in bar signal dashte bashan) mokhalefat nemikonan.
+  const mom = all.find((s) => s.strategy === 'MOM');
+  const emaS = all.find((s) => s.strategy === 'EMA');
+  const macdS = all.find((s) => s.strategy === 'MACD');
+  const noContraryTrend = (dir) => (emaS.side === 'NEUTRAL' || emaS.side === dir) && (macdS.side === 'NEUTRAL' || macdS.side === dir);
+  const strongUptrend = mom.side === 'LONG' && mom.conf >= 75 && noContraryTrend('LONG');
+  const strongDowntrend = mom.side === 'SHORT' && mom.conf >= 75 && noContraryTrend('SHORT');
+  const rsiExtremeButTrending = rsiVal != null && ((rsiVal >= 70 && strongUptrend && !rsiTurningDown) || (rsiVal <= 30 && strongDowntrend && !rsiTurningUp));
+  if (rsiExtremeButTrending) { rsiEntry.side = 'NEUTRAL'; rsiEntry.conf = 0; rsiEntry.detail = { ...rsiEntry.detail, overriddenByTrend: true }; }
+
   const fired = all.filter((s) => s.side !== 'NEUTRAL' && s.conf >= tfMinConfidence);
   let longs = fired.filter((s) => s.side === 'LONG' && s.conf >= minConfidence);
   let shorts = fired.filter((s) => s.side === 'SHORT' && s.conf >= minConfidence);
-  const rsiEntry = all.find((s) => s.strategy === 'RSI');
-  const rsiVal = rsiEntry && rsiEntry.detail ? rsiEntry.detail.rsi : null;
   let veto = null;
-  if (rsiVal != null) { if (rsiVal >= 70) { longs = []; veto = `RSI ${rsiVal.toFixed(1)} overbought — LONG veto`; } if (rsiVal <= 30) { shorts = []; veto = `RSI ${rsiVal.toFixed(1)} oversold — SHORT veto`; } }
+  if (rsiVal != null && !rsiExtremeButTrending) {
+    if (rsiVal >= 70) { longs = []; veto = rsiTurningDown ? `RSI ${rsiVal.toFixed(1)} dare az overbought bar migarde — LONG veto (reversal confirmed)` : `RSI ${rsiVal.toFixed(1)} overbought — LONG veto`; }
+    if (rsiVal <= 30) { shorts = []; veto = rsiTurningUp ? `RSI ${rsiVal.toFixed(1)} dare az oversold bar migarde — SHORT veto (reversal confirmed)` : `RSI ${rsiVal.toFixed(1)} oversold — SHORT veto`; }
+  }
   const ls = longs.reduce((a, s) => a + s.conf, 0), ss = shorts.reduce((a, s) => a + s.conf, 0);
   let direction = 'NEUTRAL'; let used = [];
   if (ls > ss && longs.length >= minAgree) { direction = 'LONG'; used = longs.map((s) => s.strategy); }
@@ -56,7 +89,7 @@ export function scanTimeframe(candles, { minConfidence = 80, minAgree = 2, tfMin
     else if (ls === ss) rejectionReason = 'Emtiaz-e LONG va SHORT barabar ast';
     else rejectionReason = `Taeed-e hamjahat kafi nist: LONG=${longs.length}, SHORT=${shorts.length}, minimum=${minAgree}`;
   }
-  return { direction, confidence: avg, signalStrength: strength, strategiesUsed: used, allSignals: all, longCount: longs.length, shortCount: shorts.length, rsi: rsiVal, vetoReason: veto, rejectionReason };
+  return { direction, confidence: avg, signalStrength: strength, strategiesUsed: used, allSignals: all, longCount: longs.length, shortCount: shorts.length, rsi: rsiVal, vetoReason: veto, rejectionReason, rsiOverriddenByTrend: rsiExtremeButTrending };
 }
 export async function scanMultiTimeframe(xt, symbol, intervals, { minConfidence = 80, tfMinConfidence = 70, minAgree = 2, limit = 200 } = {}) {
   const tfResults = {};
