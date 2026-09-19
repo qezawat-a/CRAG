@@ -190,11 +190,16 @@ export class XTTrader {
     const enabled = this.memory.getBool('reversal_enabled', Config.REVERSAL_ENABLED);
     if (!enabled) return;
     const threshold = this.memory.getInt('reversal_confidence', Config.REVERSAL_CONFIDENCE);
+    // FIX: add reversal_scope setting ('symbol' = only same symbol, 'all' = any symbol)
+    // Default to 'symbol' to avoid accidentally closing positions on other symbols
+    const scope = this.memory.getSetting('reversal_scope', 'symbol');
     const direction = result.direction;
     const confidence = result.confidence;
+    const symbol = this.memory.getSetting('symbol', Config.DEFAULT_SYMBOL);
     if (direction === 'NEUTRAL' || confidence < threshold) return;
     for (const trade of this.memory.getOpenTrades()) {
       if (trade.position_side === direction) continue; // aligned
+      if (scope === 'symbol' && trade.symbol !== symbol) continue; // different symbol, skip
       console.info(`[trader] reversal: closing ${trade.position_side} ${trade.symbol} (signal ${direction} @ ${confidence}% >= ${threshold}%)`);
       this._notify(`REVERSAL: signal flipped to ${direction} at ${confidence}% — closing ${trade.position_side} ${trade.symbol}`);
       this.closeSpecificTrade(trade.id).catch((e) => console.error(`[trader] reversal close failed: ${e.message}`));

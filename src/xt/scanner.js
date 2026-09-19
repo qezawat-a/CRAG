@@ -39,7 +39,11 @@ export function scanTimeframe(candles, { minConfidence = 80, minAgree = 2, tfMin
   // ghavi mitune RSI ro deraz-mod-dat extreme negah dare (mesal: RSI 90+ tu ye
   // pump-e vaghei). Do chiz check mikonim ghabl az veto/signal-e RSI:
   //  1) rsiTurningDown/Up: RSI nesbat be bar-e ghabl dare az extreme bar migarde
-  //     ya na (na sadeghan >=70/<=30 e, balke DARE PAEEN MIAD az).
+  //     ya na. BUG FIX: ghablan har kam-e rsi (92->91.9) "turning" migereft.
+  //     ALAN: faghat vaghti RSI az 70 (overbought) PAEEN MIAD ya az 30 (oversold)
+  //     BALA MIAD — yani reversal-e vaghei. Yani:
+  //       - overbought: prevRsi >= 70 VA rsiVal < prevRsi VA rsiVal < 70
+  //       - oversold:   prevRsi <= 30 VA rsiVal > prevRsi VA rsiVal > 30
   //  2) strongUptrend/Downtrend: 2-ta az 3-ta strategy-e trend-following
   //     (EMA/MACD/MOM) hamjahat-an va hich kodum mokhalef nist.
   // Vaghti trend ghavi-ye hamun samt-e extreme-e va RSI HANUZ dare turn nemikone
@@ -51,8 +55,10 @@ export function scanTimeframe(candles, { minConfidence = 80, minAgree = 2, tfMin
   const rsiEntry = all.find((s) => s.strategy === 'RSI');
   const rsiVal = rsiEntry && rsiEntry.detail ? rsiEntry.detail.rsi : null;
   const prevRsi = closes.length > 1 ? (rsiSignal(closes.slice(0, -1)).detail?.rsi ?? null) : null;
-  const rsiTurningDown = rsiVal != null && prevRsi != null && rsiVal < prevRsi;
-  const rsiTurningUp = rsiVal != null && prevRsi != null && rsiVal > prevRsi;
+  // FIX: only count as "turning" if RSI crosses the 70/30 threshold (confirmed reversal)
+  // Not just any tiny fluctuation in extreme territory
+  const rsiTurningDown = rsiVal != null && prevRsi != null && prevRsi >= 70 && rsiVal < prevRsi && rsiVal < 70;
+  const rsiTurningUp = rsiVal != null && prevRsi != null && prevRsi <= 30 && rsiVal > prevRsi && rsiVal > 30;
   // MOM (momentum-e piyoste-ye N-bar) behtarin nesbat-e "trend hanuz zende-s" ast —
   // EMA/MACD faghat sar-e bar-e crossover signal midan (rowidad-e lahzei, na
   // vaziyat-e edame-dar), pas nemishe montazer-e hamzaman-budan-e 2-ta-shun mand.

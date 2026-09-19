@@ -68,15 +68,17 @@ export class RiskManager {
     const maxQ = await this.getMaxOrderQty(s, orderType);
     let reason = 'ok';
     if (maxQ && qty > maxQ) { reason = `capped ${qty} -> ${maxQ} (${orderType} max)`; qty = maxQ; }
-    const notional = await this.contractsToNotional(s, qty, price);
-    const minN = await this.getMinNotional(s);
-    if (minN && notional < minN) return { qty: 0, mode, reason: `notional ${notional.toFixed(2)} < minimum ${minN} (size ${qty})` };
+    // After all qty adjustments (maxQ cap, maxN cap), validate notional against minN
+    let notional = await this.contractsToNotional(s, qty, price);
     const maxN = await this.getMaxNotional(s);
     if (maxN && notional > maxN) {
       const cs = await this.getContractSize(s);
       qty = Math.floor(maxN / (price * cs));
       if (qty < minQ) return { qty: 0, mode, reason: 'max notional cap pushes size below minimum' };
+      notional = await this.contractsToNotional(s, qty, price); // recalc after maxN adjustment
     }
+    const minN = await this.getMinNotional(s);
+    if (minN && notional < minN) return { qty: 0, mode, reason: `notional ${notional.toFixed(2)} < minimum ${minN} (size ${qty})` };
     return { qty, mode, reason };
   }
   async getMaxLeverage(s, notional = null) {

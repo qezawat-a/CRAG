@@ -232,18 +232,20 @@ export class PositionManager {
     const safety = this.memory.getNum('sl_liquidation_safety', 0.5);
     const maxDist = this.liquidationDistance(entry, leverage) * safety;
     if (positionSide === 'LONG') {
-      const safeSl = await this.risk.roundPrice(symbol, entry - maxDist);
-      const safeSlPrice = await this.risk.roundPrice(symbol, mark * 0.999);
-      if (mark <= safeSl || safeSlPrice <= safeSl) {
-        return [null, `position is already past the safe stop level (mark ${mark}, safe_sl ${safeSl}); a stop here would trigger instantly. Close it or widen sl_liquidation_safety.`];
+      const safeSl = await this.risk.roundPrice(symbol, entry - maxDist); // minimum SL (liquidation safety)
+      const safeSlPrice = await this.risk.roundPrice(symbol, mark * 0.999); // maximum SL (0.1% below mark to avoid instant trigger)
+      // FIX: check if valid SL range exists (safeSl <= safeSlPrice). Also check if mark already past safeSl.
+      if (mark <= safeSl || safeSl > safeSlPrice) {
+        return [null, `position is already past the safe stop level (mark ${mark}, safe_sl ${safeSl}) or no valid SL range exists; close it or widen sl_liquidation_safety.`];
       }
       sl = Math.min(Math.max(sl, safeSl), safeSlPrice);
       tp = Math.max(tp, await this.risk.roundPrice(symbol, mark * 1.001));
     } else {
-      const safeSl = await this.risk.roundPrice(symbol, entry + maxDist);
-      const safeSlPrice = await this.risk.roundPrice(symbol, mark * 1.001);
-      if (mark >= safeSl || safeSlPrice >= safeSl) {
-        return [null, `position is already past the safe stop level (mark ${mark}, safe_sl ${safeSl}); a stop here would trigger instantly. Close it or widen sl_liquidation_safety.`];
+      const safeSl = await this.risk.roundPrice(symbol, entry + maxDist); // minimum SL distance (liquidation safety)
+      const safeSlPrice = await this.risk.roundPrice(symbol, mark * 1.001); // maximum SL (0.1% above mark)
+      // FIX: check if valid SL range exists (safeSlPrice <= safeSl). Also check if mark already past safeSl.
+      if (mark >= safeSl || safeSlPrice > safeSl) {
+        return [null, `position is already past the safe stop level (mark ${mark}, safe_sl ${safeSl}) or no valid SL range exists; close it or widen sl_liquidation_safety.`];
       }
       sl = Math.max(Math.min(sl, safeSl), safeSlPrice);
       tp = Math.min(tp, await this.risk.roundPrice(symbol, mark * 0.999));
@@ -320,12 +322,14 @@ export class PositionManager {
     const pos = await this.getPositionPnl(symbol, positionSide);
     if (!pos.exists) return [false, 'no open position', null];
     // Trigger is ROI on margin; distance is a raw price percentage (separate knobs)
+    // FIX: legacy trailing_stop_pct is a PRICE % move — only valid as fallback for distancePct.
+    // triggerRoi (ROI %) needs its own sensible default, not the legacy price % value.
     let triggerRoi = this.memory.getNum('trailing_trigger_roi_pct', 0);
     let distancePct = this.memory.getNum('trailing_distance_pct', 0);
     let legacy = this.memory.getNum('trailing_stop_pct', 2.0);
     if (!(legacy > 0 && legacy < 20)) legacy = Config.TRAILING_STOP_PCT;
-    if (triggerRoi <= 0 || triggerRoi > 100) triggerRoi = legacy;
-    if (distancePct <= 0 || distancePct >= 20) distancePct = Config.TRAILING_DISTANCE_PCT;
+    if (triggerRoi <= 0 || triggerRoi > 100) triggerRoi = Config.TRAILING_TRIGGER_ROI_PCT; // ROI% default, not legacy price%
+    if (distancePct <= 0 || distancePct >= 20) distancePct = legacy || Config.TRAILING_DISTANCE_PCT; // legacy is price%, OK here
     if (pos.roi < triggerRoi) return [false, `ROI ${pos.roi.toFixed(2)}% below trailing trigger ${triggerRoi}%`, null];
     const entrust = await this._getProfitEntrust(symbol, positionSide, pos);
     const profitId = entrust.profitId;
@@ -355,10 +359,12 @@ export class PositionManager {
     if (!pos.exists) return `${symbol} ${positionSide}: no open position on the exchange.`;
     let beThreshold = this.memory.getNum('breakeven_threshold_pct', Config.BREAKEVEN_THRESHOLD_PCT);
     const legacy = this.memory.getNum('trailing_stop_pct', Config.TRAILING_STOP_PCT);
-    let triggerRoi = this.memory.getNum('trailing_trigger_roi_pct', 0) || legacy;
-    let distancePct = this.memory.getNum('trailing_distance_pct', 0) || legacy;
+    // FIX: legacy trailing_stop_pct is a PRICE % move — only valid as fallback for distancePct.
+    // triggerRoi (ROI %) needs its own sensible default.
+    let triggerRoi = this.memory.getNum('trailing_trigger_roi_pct', 0) || Config.TRAILING_TRIGGER_ROI_PCT;
+    let distancePct = this.memory.getNum('trailing_distance_pct', 0) || legacy || Config.TRAILING_DISTANCE_PCT;
     if (beThreshold <= 0 || beThreshold > 25) beThreshold = Config.BREAKEVEN_THRESHOLD_PCT;
-    if (triggerRoi <= 0 || triggerRoi > 100) triggerRoi = legacy;
+    if (triggerRoi <= 0 || triggerRoi > 100) triggerRoi = Config.TRAILING_TRIGGER_ROI_PCT;
     if (distancePct <= 0 || distancePct >= 20) distancePct = Config.TRAILING_DISTANCE_PCT;
     const entrust = await this._getProfitEntrust(symbol, positionSide, pos);
     const profitId = entrust.profitId;

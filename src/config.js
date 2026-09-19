@@ -47,6 +47,7 @@ const STATIC_TRADER_DEFAULTS = {
   on_tpsl_failure: 'close',
   reversal_enabled: 'true',
   reversal_confidence: 85,
+  reversal_scope: 'symbol',
   report_interval_sec: 300,
   mid_manage_interval_sec: 30,
 };
@@ -96,6 +97,7 @@ const TRADER_SETTING_DEFS = {
   on_tpsl_failure: { type: 'enum', values: ['close', 'warn'], label: 'Age TP/SL gozashte nashod (close/warn)' },
   reversal_enabled: { type: 'bool', label: 'Reversal on/off (true/false ya 1/0)' },
   reversal_confidence: { type: 'int', min: 50, max: 100, label: 'Reversal min confidence (50..100)' },
+  reversal_scope: { type: 'enum', values: ['symbol', 'all'], label: 'Reversal scope (symbol=same symbol only, all=any symbol)' },
   report_interval_sec: { type: 'int', min: 0, max: 3600, label: 'Report interval sec (0=off, ta 3600)' },
   mid_manage_interval_sec: { type: 'int', min: 15, max: 3600, label: 'Mid-manage interval sec (15..3600)' },
 };
