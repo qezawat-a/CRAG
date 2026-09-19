@@ -190,11 +190,16 @@ export class XTTrader {
     const enabled = this.memory.getBool('reversal_enabled', Config.REVERSAL_ENABLED);
     if (!enabled) return;
     const threshold = this.memory.getInt('reversal_confidence', Config.REVERSAL_CONFIDENCE);
+    // FIX: add reversal_scope setting ('symbol' = only same symbol, 'all' = any symbol)
+    // Default to 'symbol' to avoid accidentally closing positions on other symbols
+    const scope = this.memory.getSetting('reversal_scope', 'symbol');
     const direction = result.direction;
     const confidence = result.confidence;
+    const symbol = this.memory.getSetting('symbol', Config.DEFAULT_SYMBOL);
     if (direction === 'NEUTRAL' || confidence < threshold) return;
     for (const trade of this.memory.getOpenTrades()) {
       if (trade.position_side === direction) continue; // aligned
+      if (scope === 'symbol' && trade.symbol !== symbol) continue; // different symbol, skip
       console.info(`[trader] reversal: closing ${trade.position_side} ${trade.symbol} (signal ${direction} @ ${confidence}% >= ${threshold}%)`);
       this._notify(`REVERSAL: signal flipped to ${direction} at ${confidence}% — closing ${trade.position_side} ${trade.symbol}`);
       this.closeSpecificTrade(trade.id).catch((e) => console.error(`[trader] reversal close failed: ${e.message}`));
@@ -286,17 +291,20 @@ export class XTTrader {
     const confidence = scan.confidence;
     const strength = scan.signalStrength;
 
+    // Balance-e تازه (cache 3s invalidate) تا سایز با موجودی واقعی حساب بشه —
+    // وگرنه با margin_amount_pct=95/100 دائم insufficient_balance میگیریم.
+    this.risk.invalidateBalanceCache();
     // provisional leverage -> provisional TP/SL (for risk-based sizing) -> size
     const provisionalLeverage = await this.risk.validateLeverage(symbol, leverageSetting);
     const [, provisionalSlPrice] = await this.positionMgr.calculateDynamicTpsl(symbol, direction, price, strength, confidence, provisionalLeverage);
-    let [qty, sizeMode, sizeReason] = await this.risk.calculatePositionSize(symbol, price, provisionalLeverage, { stopLossPrice: provisionalSlPrice, orderType });
+    let { qty, mode: sizeMode, reason: sizeReason } = await this.risk.calculatePositionSize(symbol, price, provisionalLeverage, { stopLossPrice: provisionalSlPrice, orderType });
     if (qty <= 0) return `Cannot size position: ${sizeReason}`;
 
     let notional = await this.risk.contractsToNotional(symbol, qty, price);
     const leverage = await this.risk.validateLeverage(symbol, leverageSetting, notional);
     // margin mode: size depends on leverage -> recalc with correct leverage
     if (this.memory.getSetting('position_mode', 'margin') === 'margin') {
-      [qty, sizeMode, sizeReason] = await this.risk.calculatePositionSize(symbol, price, leverage, { stopLossPrice: provisionalSlPrice, orderType });
+      ({ qty, mode: sizeMode, reason: sizeReason } = await this.risk.calculatePositionSize(symbol, price, leverage, { stopLossPrice: provisionalSlPrice, orderType }));
       if (qty <= 0) return `Cannot size position: ${sizeReason}`;
     }
     notional = await this.risk.contractsToNotional(symbol, qty, price);
@@ -316,17 +324,56 @@ export class XTTrader {
     }
     const limitPrice = orderType === 'LIMIT' ? await this.risk.roundPrice(symbol, price) : null;
 
-    console.info(`[trader] opening ${direction} ${symbol}: ${qty} contracts (~${notional.toFixed(2)} USDT) at ${price} lev=${leverage}x tp=${tpPrice} sl=${slPrice} conf=${confidence}% mode=${sizeMode}`);
+    console.info(`[trader] opening ${direction} ${symbol}: ${qty} contracts (~${notional.toFixed(2)} USDT) at ${price} lev=${leverage}x tp=${tpPrice} sl=${slPrice} conf=${confidence}% mode=${sizeMode} sizing=[${sizeReason}]`);
 
+    // Retry خودکار روی insufficient_balance: هر بار 15% shrink + balance تازه.
+    // (قیمت MARKET موقع fill کمی جابجا میشه + fee، پس سایز تئوریک گاهی 1-2% بزرگه)
     let orderData;
-    try {
-      orderData = await this.xt.createOrder({
-        symbol, positionSide: direction,
-        orderSide: direction === 'LONG' ? 'BUY' : 'SELL',
-        orderType, origQty: qty, price: limitPrice, timeInForce,
-      });
-    } catch (e) {
-      return `Order rejected by XT: ${e.message}`;
+    let attemptQty = qty;
+    let attemptNotional = notional;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        orderData = await this.xt.createOrder({
+          symbol, positionSide: direction,
+          orderSide: direction === 'LONG' ? 'BUY' : 'SELL',
+          orderType, origQty: attemptQty, price: limitPrice, timeInForce,
+        });
+        if (attemptQty !== qty) {
+          console.info(`[trader] insufficient_balance recovered: ${qty} -> ${attemptQty} contracts (attempt ${attempt + 1})`);
+          qty = attemptQty;
+          notional = attemptNotional;
+        }
+        break;
+      } catch (e) {
+        if (e.orderOutcomeUnknown) {
+          const message = `Natije-ye order NAMALUM ast: ${e.message}. Retry nashod; momkene order dar XT sabt shode bashe. Ghabl az talash-e dobare, positions va orders-e XT ro check kon.`;
+          this._notify(message);
+          return message;
+        }
+        const msg = String((e && e.message) || '');
+        const isInsuff = /insufficient_balance|insufficient[^a-z]*balance|balance[^a-z]*insufficient/i.test(msg);
+        if (isInsuff && attempt < 3) {
+          this.risk.invalidateBalanceCache();
+          const shrunk = Math.floor(attemptQty * 0.85);
+          let minQ = 1;
+          try { minQ = await this.risk.getMinQty(symbol); } catch {}
+          if (shrunk < minQ) {
+            return `Order rejected by XT (insufficient_balance) even after auto-shrink to ${attemptQty} contracts. Available balance کافی نیست — margin_amount_pct رو کمتر کن (مثلا 50-70) یا leverage رو بیار پایین. Original: ${msg}`;
+          }
+          let shrunkNotional = attemptNotional;
+          try { shrunkNotional = await this.risk.contractsToNotional(symbol, shrunk, price); } catch {}
+          let minN = 0;
+          try { minN = await this.risk.getMinNotional(symbol); } catch {}
+          if (minN && shrunkNotional < minN) {
+            return `Order rejected by XT (insufficient_balance). Shrink بیشتر ممکن نیست (minNotional ${minN}). margin_amount_pct رو کمتر کن. Original: ${msg}`;
+          }
+          console.info(`[trader] insufficient_balance (attempt ${attempt + 1}/4): ${attemptQty} -> ${shrunk} contracts. Retrying...`);
+          attemptQty = shrunk;
+          attemptNotional = shrunkNotional;
+          continue;
+        }
+        return `Order rejected by XT: ${e.message}`;
+      }
     }
     this.risk.invalidateBalanceCache();
     const orderId = this._extractOrderId(orderData);
