@@ -1,0 +1,38 @@
+{
+  "session": {
+    "resumeLast": true,
+    "autoCompact": true
+  },
+  "model": {
+    "autoRefreshModels": false
+  },
+  "gateway": {
+    "enabled": true,
+    "messenger": "telegram",
+    "token": "",
+    "userId": ""
+  },
+  "mcp": {
+    "enabled": false,
+    "servers": {
+      "fs": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "."
+        ],
+        "env": {}
+      }
+    }
+  },
+  "serve": {
+    "enabled": true
+  },
+  "thinking": {
+    "level": "max"
+  },
+  "skills": {
+    "exclude": []
+  }
+}
