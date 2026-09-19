@@ -37,30 +37,95 @@ export class RiskManager {
   invalidateBalanceCache() { this._balCache = null; }
   async getTotalBalance() { return Number((await this._usdt()).walletBalance || 0); }
   async getAvailableBalance() { return Number((await this._usdt()).availableBalance || 0); }
-  async contractsToNotional(s, qty, price) { return Number(qty) * Number(price) * Number(await this.getContractSize(s)); }
-  async sizeByMarginPct(s, price, lev) {
-    const pct = Number(this.getSetting('margin_amount_pct', 25));
-    const bal = await this.getAvailableBalance();
-    const cs = await this.getContractSize(s);
-    if (bal <= 0 || price <= 0 || cs <= 0 || lev <= 0) return 0;
-    return Math.floor((bal * (pct / 100) * lev) / (price * cs));
+  // Balance-e rasmi-e XT baraye formula-e OrigQty (doc: Create Orders):
+  // Balance = walletBalance - openOrderMarginFrozen
+  // API: /future/user/v1/compat/balance/list
+  async getTradeBalance() {
+    const b = await this._usdt();
+    const w = Number(b.walletBalance || 0);
+    const frozen = Number(b.openOrderMarginFrozen || 0);
+    if (Number.isFinite(w) && Number.isFinite(frozen) && (w > 0 || frozen > 0)) {
+      return Math.max(0, w - frozen);
+    }
+    // fallback age exchange frozen ro nadad
+    return Number(b.availableBalance || 0);
   }
-  async sizeByRiskPct(s, entry, sl) {
+  // Mark price baraye sizing (doc mige Mark_price, na last/agg).
+  async getMarkPriceForSizing(s, fallbackPrice) {
+    try {
+      const m = await this.xt.getMarkPrice(s);
+      const p = Number(m.p ?? m.markPrice ?? m.price ?? 0);
+      if (p > 0) return p;
+    } catch {}
+    return Number(fallbackPrice);
+  }
+  async contractsToNotional(s, qty, price) { return Number(qty) * Number(price) * Number(await this.getContractSize(s)); }
+  // Buffer ha baraye inke XT insufficient_balance nade:
+  // - FEE_RATE: taker ~0.05% (ba hashiye-ye emn 0.06%)
+  // - SLIPPAGE: MARKET 0.1% (fill behtar/az price-e scan), LIMIT 0.02%
+  // - SAFETY: 1.5% hashiye-ye kolli (rounding, mark-price drift, frozen)
+  // - MAX_USABLE_PCT: hata age user 100% set kone, bishtar az 95% estefade nemishe
+  //   ta hamishe ~5% + fee buffer azad bemune.
+  static FEE_RATE = 0.0006;
+  static SAFETY_MARGIN = 0.015;
+  static MAX_USABLE_PCT = 95;
+  _slippageFor(orderType) { return String(orderType || 'MARKET').toUpperCase() === 'MARKET' ? 0.001 : 0.0002; }
+  // Hadaksar qty ke ba balance-e feli (margin + fee) ghabel-e pardakhte.
+  // Base = formula-e rasmi-e XT: Truncate((Balance * Percent * Lev) / (Mark * CS))
+  // ba Balance = wallet - frozen. Buffer-e fee/slippage/safety baraye
+  // insufficient_balance ezafe شده (vagarna 95/100% hamishe reject mikhore).
+  async maxAffordableQty(s, price, lev, { orderType = 'MARKET' } = {}) {
+    const bal = await this.getTradeBalance();
+    const cs = await this.getContractSize(s);
+    const mark = await this.getMarkPriceForSizing(s, price);
+    const px = Number(mark);
+    const lv = Number(lev);
+    if (!(bal > 0) || !(px > 0) || !(cs > 0) || !(lv > 0)) return 0;
+    const slip = this._slippageFor(orderType);
+    const unitCost = px * (1 + slip) * cs * ((1 / lv) + RiskManager.FEE_RATE);
+    if (!(unitCost > 0)) return 0;
+    return Math.floor((bal / unitCost) * (1 - RiskManager.SAFETY_MARGIN));
+  }
+  async sizeByMarginPct(s, price, lev, { orderType = 'MARKET' } = {}) {
+    const rawPct = Number(this.getSetting('margin_amount_pct', 25));
+    const pct = Math.min(Math.max(rawPct, 0), 100);
+    // Cap: 100%-e vaghei hamishe reject mishe (fee + rounding), پس cap be 95%
+    const effPct = Math.min(pct, RiskManager.MAX_USABLE_PCT);
+    const bal = await this.getTradeBalance();
+    const cs = await this.getContractSize(s);
+    const mark = await this.getMarkPriceForSizing(s, price);
+    if (bal <= 0 || mark <= 0 || cs <= 0 || lev <= 0) return 0;
+    const slip = this._slippageFor(orderType);
+    const effPrice = Number(mark) * (1 + slip);
+    // margin + fee bayad <= bal*effPct% bashe:
+    // qty = Truncate(bal*effPct% / (mark*(1+slip)*cs*(1/lev + FEE)) * (1-SAFETY))
+    const unitCost = effPrice * cs * ((1 / Number(lev)) + RiskManager.FEE_RATE);
+    if (!(unitCost > 0)) return 0;
+    return Math.floor(((bal * (effPct / 100)) / unitCost) * (1 - RiskManager.SAFETY_MARGIN));
+  }
+  async sizeByRiskPct(s, entry, sl, { orderType = 'MARKET' } = {}) {
     const pct = Number(this.getSetting('margin_risk_pct', 1));
-    const bal = await this.getAvailableBalance();
+    const bal = await this.getTradeBalance();
     const cs = await this.getContractSize(s);
     const diff = Math.abs(Number(entry) - Number(sl));
     if (bal <= 0 || diff <= 0 || cs <= 0) return 0;
-    return Math.floor((bal * (pct / 100)) / (diff * cs));
+    const qty = Math.floor((bal * (pct / 100)) / (diff * cs));
+    // Hata dar risk mode, qty nabayad az tavan-e pardakht (margin+fee) bishtar bashe
+    try {
+      const lev = parseInt(this.getSetting('leverage', 1), 10) || 1;
+      const afford = await this.maxAffordableQty(s, entry, lev, { orderType });
+      if (afford > 0 && qty > afford) return afford;
+    } catch {}
+    return qty;
   }
   async calculatePositionSize(s, price, lev, { stopLossPrice = null, orderType = 'MARKET' } = {}) {
     const mode = this.getSetting('position_mode', 'margin');
     let qty, smode;
-    if (mode === 'risk' && stopLossPrice) { qty = await this.sizeByRiskPct(s, price, stopLossPrice); smode = 'risk_based'; }
-    else { qty = await this.sizeByMarginPct(s, price, lev); smode = 'margin_based'; }
-    return this._validateSize(s, qty, price, smode, orderType);
+    if (mode === 'risk' && stopLossPrice) { qty = await this.sizeByRiskPct(s, price, stopLossPrice, { orderType }); smode = 'risk_based'; }
+    else { qty = await this.sizeByMarginPct(s, price, lev, { orderType }); smode = 'margin_based'; }
+    return this._validateSize(s, qty, price, smode, orderType, lev);
   }
-  async _validateSize(s, qty, price, mode, orderType) {
+  async _validateSize(s, qty, price, mode, orderType, lev = null) {
     qty = parseInt(qty, 10) || 0;
     if (qty <= 0) return { qty: 0, mode, reason: 'computed size 0 (balance too small for one contract)' };
     const minQ = await this.getMinQty(s);
@@ -79,6 +144,24 @@ export class RiskManager {
     }
     const minN = await this.getMinNotional(s);
     if (minN && notional < minN) return { qty: 0, mode, reason: `notional ${notional.toFixed(2)} < minimum ${minN} (size ${qty})` };
+    // Affordability: margin + fee bayad tu available جا بشه، وگرنه auto-shrink
+    // (in daghighan fix-e insufficient_balance baraye margin_amount_pct=95/100-e)
+    try {
+      const lv = Number(lev) || parseInt(this.getSetting('leverage', 1), 10) || 1;
+      const afford = await this.maxAffordableQty(s, price, lv, { orderType });
+      if (afford <= 0) return { qty: 0, mode, reason: 'insufficient balance for even 1 contract (margin+fee)' };
+      if (qty > afford) {
+        const before = qty;
+        qty = afford;
+        if (qty < minQ) return { qty: 0, mode, reason: `affordable size ${qty} below exchange minimum ${minQ} (balance too small)` };
+        // minNotional ro dobare check kon bad az shrink
+        notional = await this.contractsToNotional(s, qty, price);
+        if (minN && notional < minN) return { qty: 0, mode, reason: `notional ${notional.toFixed(2)} < minimum ${minN} after affordability shrink (size ${qty})` };
+        reason = reason === 'ok'
+          ? `shrunk ${before} -> ${qty} to fit available balance (margin+fee buffer)`
+          : `${reason}; shrunk ${before} -> ${qty} to fit available balance`;
+      }
+    } catch {}
     return { qty, mode, reason };
   }
   async getMaxLeverage(s, notional = null) {
